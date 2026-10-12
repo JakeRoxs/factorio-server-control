@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- Update Go to 1.26.9 across the backend module, container builders, mounted-directory tests and release checks for the upstream HTTP, MIME and TLS security fixes. Existing data, profiles, authentication and configuration remain unchanged.
+
+### Changed
+- Refresh the pinned Node 24 and Ubuntu 24.04 images and GitHub artifact upload/download actions without changing their major versions.
+- Add a regression check that keeps all Go build and CI versions aligned with the exact patch version in `src/go.mod`.
+
 ## [0.20.0] - 2026-10-07
 
 ### Added
