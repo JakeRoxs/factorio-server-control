@@ -171,6 +171,6 @@ cd ..
 python3 scripts/validate-unraid-template.py
 ```
 
-CI additionally runs Python repository validators, targeted Go race tests, mounted-directory transaction tests, a production image build and the required-persistence/split-mount entrypoint checks. These checks do **not** start a real playable world or exercise live RCON. `scripts/smoke-new-world.sh` is a separate, opt-in test for a disposable installation with a real engine; it covers generation, previews, start/stop and checkpoint creation/restore. See [CONTRIBUTING.md](CONTRIBUTING.md) for its safety guard and prerequisites.
+CI additionally runs Python repository validators, targeted Go race tests, the synthetic browser matrix, mounted-directory transaction tests, a production image build and the required-persistence/split-mount entrypoint checks. Its separate disposable real-engine matrix creates tiny worlds, exercises live RCON/checkpoints and verifies restart/recreation with combined and split persistence. It does not use a Mod Portal account or a private save. `scripts/smoke-new-world.sh` remains a separate opt-in manual check for a disposable installation. See [CONTRIBUTING.md](CONTRIBUTING.md) for both test paths, safety guards and prerequisites.
 
 Validate generated release ZIP contents with `scripts/build-release.ps1` on Windows or `make gen_release` on Linux. Follow [RELEASE.md](RELEASE.md) only when a release is requested; an ordinary cleanup PR does not publish a version or container image.

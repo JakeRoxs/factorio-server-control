@@ -265,7 +265,10 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
 
     return <div className="ui-app-shell">
         <header className="ui-mobile-appbar">
-            <button className="ui-mobile-menu" onClick={() => setIsNavOpen(true)} aria-label="Open navigation">
+            <button className="ui-mobile-menu" onClick={event => {
+                event.currentTarget.focus({preventScroll: true});
+                setIsNavOpen(true);
+            }} aria-label="Open navigation">
                 <FontAwesomeIcon icon={faBars}/>
             </button>
             <BrandMark/>

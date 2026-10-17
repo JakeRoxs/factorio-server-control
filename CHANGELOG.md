@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.20.1] - 2026-10-17
 
 ### Security
 - Replace the Tailwind 3 build chain with Tailwind 4 and plain CSS, removing the unpatched `braces` dependency (GHSA-vfj7-8cjw-p6xm). Preserve the existing palette and layouts; Sass and its unused loaders are no longer required.
@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - Release a queued stop after failed startup, leave an already-stopped runtime unlocked, and wait for pending startup during manager shutdown.
 - Keep keyboard focus inside mobile navigation, close the profile picker before its parent drawer, and keep mobile help text within the viewport.
+- Restore focus to dialog and mobile-navigation triggers after dismissal even when the browser does not focus buttons on pointer activation.
 - Ignore obsolete WebSocket callbacks after reconnect/logout and handle failed sends without replaying console commands.
 - Prevent delayed profile-list responses from reverting a completed profile change or replacing newer loading/error state.
 - Match save-upload controls to the existing stopped-server API guard instead of offering uploads that the server rejects.
