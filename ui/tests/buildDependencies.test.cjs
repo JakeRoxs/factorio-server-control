@@ -23,18 +23,24 @@ test("all selector-parser build dependencies include the CPU-exhaustion fix", ()
     for (const [path, metadata] of parsers) {
         assert.ok(semver.gte(metadata.version, "7.1.6"), `${path}: ${metadata.version}`);
     }
-    const fromTailwind = createRequire(require.resolve("tailwindcss"));
-    assert.ok(semver.gte(fromTailwind("postcss-selector-parser/package.json").version, "7.1.6"));
 });
 
-test("patched selector parser preserves nested build selectors", async () => {
+test("the build dependency tree no longer includes unpatched braces", () => {
+    const lock = require("../../package-lock.json");
+    assert.deepEqual(Object.keys(lock.packages).filter(path => path.endsWith("node_modules/braces")), []);
+});
+
+test("Tailwind builds the existing palette and responsive utilities from the real stylesheet", async () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
     const postcss = require("postcss");
-    const nested = require("postcss-nested");
-    const result = await postcss([nested]).process(
-        '.card { &:hover, &[data-state="open"] { color: red; } .child { display: block; } }',
-        {from: undefined}
-    );
-    const selectors = [];
-    result.root.walkRules(rule => selectors.push(rule.selector));
-    assert.deepEqual(selectors, ['.card:hover, .card[data-state="open"]', '.card .child']);
+    const from = path.resolve(__dirname, "../index.css");
+    const result = await postcss([require("@tailwindcss/postcss")]).process(fs.readFileSync(from, "utf8"), {from});
+    assert.match(result.css, /\.text-orange\s*\{\s*color: #F4A62A/i);
+    assert.match(result.css, /\.sm\\:flex-row/);
+    assert.match(result.css, /\.border-white\\\/5/);
+    assert.match(result.css, /\.bg-orange\\\/10/);
+    assert.match(result.css, /\.shrink-0/);
+    assert.match(result.css, /\.ui-sidebar/);
+    assert.doesNotMatch(result.css, /@import "tailwindcss"/);
 });

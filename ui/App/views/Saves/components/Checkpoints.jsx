@@ -164,7 +164,7 @@ const Checkpoints = ({serverStatus, onRestore, canManage = false}) => {
                         <Checkbox text="Create a checkpoint before a clean server shutdown" help="A force stop cannot create a safe checkpoint." register={register("clean_stop_enabled")}/>
                     </div>
                 </div>
-                <div className="flex flex-col md:flex-row md:items-end gap-4 pb-5 border-b border-white border-opacity-5">
+                <div className="flex flex-col md:flex-row md:items-end gap-4 pb-5 border-b border-white/5">
                     <div className="w-full md:max-w-xs">
                         <Label text="Maximum stored checkpoints" htmlFor="retention_count" help="0 keeps every checkpoint. A reduced limit is applied only after a replacement snapshot is verified."/>
                         <Input type="number" min={0} max={1000} disabled={isSavingSettings} register={register("retention_count", {

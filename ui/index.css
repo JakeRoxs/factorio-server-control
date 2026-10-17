@@ -1,6 +1,7 @@
-@import "tailwindcss/base";
-@import "tailwindcss/utilities";
-@import "tailwindcss/components";
+@import "tailwindcss" source(none);
+@config "../tailwind.config.js";
+@source "./App";
+@source "./index.html";
 
 :root {
   color-scheme: dark;

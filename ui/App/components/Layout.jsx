@@ -13,6 +13,7 @@ import {useProfiles} from "../context/ProfileContext";
 import profilesResource from "../../api/resources/profiles";
 import BrandMark from "./BrandMark";
 import {lockBodyScroll} from "./overlay";
+import RouteContent from "./RouteContent";
 
 const profileLinks = [
     ["Overview", "/", faGaugeHigh],
@@ -272,7 +273,9 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
         <main className="ui-main">
             <ProfileContextBar serverStatus={serverStatus} refreshServerStatus={refreshServerStatus} canManage={canManage}/>
             <div className="ui-page">
-                <Outlet key={outletKey}/>
+                <RouteContent key={`${outletKey}:${location.pathname}`}>
+                    <Outlet/>
+                </RouteContent>
             </div>
         </main>
 

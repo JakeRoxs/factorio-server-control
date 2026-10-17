@@ -11,7 +11,7 @@ Work from `main` on a focused branch and preserve existing installations. The ru
 | Runtime and storage | `src/factorio/` | One playable process, profiles, saves, checkpoints, mods and releases |
 | Isolated exporters | `src/factorio/map_snapshot_exporter/`, startup-settings exporter | Disposable engine workspaces; never write exported state back into a playable profile |
 | UI | `ui/App/`, `ui/api/` | React views, shared profile state, API and WebSocket clients |
-| UI tests | `ui/tests/` | Node test runner, CommonJS helpers and React 18 component tests |
+| UI tests | `ui/tests/`, `ui/e2e/` | Node helpers/components and production-bundle browser regressions |
 | Deployment and release | `docker/`, `templates/`, `scripts/`, `.github/workflows/` | Images, persistence, Unraid metadata, CI and opt-in publication |
 
 `ui/index.html` is the HTML source. `npm run build` generates the complete `app/` directory; do not edit or commit build output. Keep test data synthetic and small. Savegames, user data, tokens and locally generated credentials do not belong in fixtures or screenshots.
@@ -63,12 +63,17 @@ Use `npm run watch` while editing, or rebuild once and reload the browser. The U
 | Check | What it verifies | What it does not establish |
 | --- | --- | --- |
 | Node tests | Helpers, real profile-provider ordering, upload guards, client errors, socket lifecycle and build configuration | Browser rendering, layout or native file dialogs |
+| Browser matrix | Every route, lazy assets, keyboard, mobile layout, permissions and failure recovery in Chromium/Firefox/WebKit | Real game state; the loopback API fixture is synthetic |
 | Short Go suite | Parsers, authorization, transactions, rollback fixtures, settings and handler contracts | Every combination of real third-party mods |
 | Race tests | Concurrent code exercised by those tests | Freedom from all possible races |
 | Docker CI | Linux image build, mount-safe replacements, persistence guard and split layout | A live game session or full backup disaster recovery |
 | Live world smoke | Real previews, world creation, start/stop and checkpoint round trip | Production load, all Factorio releases or large modded saves |
 
 Add a regression that fails before every bug fix. Use temporary directories and explicit dependency boundaries. Keep the shared client/provider behavior in the test rather than duplicating it in a test-only implementation. Browser smoke tests should cover admin and viewer permissions, stopped/running/unknown state, keyboard navigation, failed requests, profile switching and narrow layouts.
+
+### Browser regression matrix
+
+After `npm ci` and `npm run build`, run `npx playwright install --with-deps chromium firefox webkit` and `npm run test:browser`. The suite owns a loopback fixture on port 18089 and refuses to reuse an existing listener. It never opens a real manager or reads local saves. The five projects cover desktop Chromium, Firefox and WebKit, plus mobile Chromium/WebKit viewports. Native file dialogs and physical mobile devices are outside that matrix. Test traces and screenshots stay in ignored `test-results/`.
 
 ### Optional live world test
 
@@ -87,7 +92,7 @@ An interrupted run can leave test data if the manager is unreachable; inspect th
 
 Use `npm audit` and the reachability-aware Go scanner in addition to tests. Inspect the advisory and the code path before deciding whether an alert affects build tools, shipped browser code or server runtime. A clean `npm audit --omit=dev` alone does not prove that a frontend is safe: the browser bundle also uses packages classified as development dependencies.
 
-Do not use `npm audit fix --force` to change the framework as an incidental security fix. Keep immutable container/action pins and exact Go toolchain alignment. The known unpatched Tailwind 3 build dependency and its scope are documented in [Technical notes](TECHNICAL-NOTES.md#frontend-dependency-compatibility).
+Do not use `npm audit fix --force` to change the framework as an incidental security fix. Keep immutable container/action pins and exact Go toolchain alignment. The Tailwind 4 migration and removal of the unpatched Tailwind 3 build chain are documented in [Technical notes](TECHNICAL-NOTES.md#frontend-dependency-compatibility).
 
 ## Pull requests and releases
 

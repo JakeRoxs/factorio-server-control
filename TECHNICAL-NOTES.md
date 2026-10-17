@@ -39,9 +39,9 @@
 ## Deliberate trade-offs
 
 - The interface currently uses English only; a future multilingual implementation should use a complete message catalogue instead of mixing languages in individual views.
-- Frontend tests cover pure helpers, the actual profile provider, save-upload guards, API errors and WebSocket lifecycle through isolated adapters. They do not replace browser layout, keyboard and full end-to-end checks.
-- Sass uses its modern JavaScript API. Webpack extracts styles once and minifies them with the CSS minimizer, alongside JavaScript minification.
-- The frontend currently ships as one main JavaScript bundle. Code splitting is possible follow-up work, not a reason to remove working views.
+- Frontend component tests cover pure helpers, the actual profile provider, save-upload guards, API errors, route failures and WebSocket lifecycle through isolated adapters. The browser matrix exercises the production UI with synthetic API data; it does not claim to test a real game engine.
+- Tailwind 4 processes plain CSS with its PostCSS plugin. Webpack extracts and minifies styles; no Sass preprocessing is needed. Supported browsers meet Tailwind's baseline: Chrome 111+, Safari 16.4+ or Firefox 128+.
+- Authentication and navigation load first; management pages use content-hashed asynchronous chunks. A failed page retains the navigation shell and offers an explicit reload. No automatic refresh discards open work after a container update.
 - The manager should be exposed through a trusted internal network, VPN or a properly secured reverse proxy.
 - Profiles intentionally duplicate their archived saves, mods and configuration below manager storage. This favors transparent rollback and simple recovery over deduplicated storage.
 
@@ -93,9 +93,9 @@ The optional/recommended default is stored atomically in `mod-portal-preferences
 
 ### Frontend dependency compatibility
 
-The build retains Tailwind 3 and its existing PostCSS integration. An npm override resolves every `postcss-selector-parser` instance to at least 7.1.6, including Tailwind's and `postcss-nested`'s older declared ranges, to address GHSA-rj75-hqrm-r3gf. Lockfile and nested-selector regression tests cover the override; the release comparison produced byte-identical production CSS before and after it. Recheck this compatibility when upgrading the parser or Tailwind, and remove the override when upstream dependency ranges no longer need it. A Tailwind 4 migration remains separate work.
+The build uses [Tailwind 4's PostCSS integration](https://tailwindcss.com/docs/upgrade-guide), with the existing color and spacing configuration and explicit UI source directories. The stylesheet is ordinary CSS; legacy opacity utilities have been migrated to slash-opacity forms. A build regression compiles the actual stylesheet and checks the palette and responsive utilities. The `postcss-selector-parser` override retains at least 7.1.6 for remaining CSS-minifier dependencies.
 
-Tailwind is a development dependency: neither it nor Node.js is installed in the production runtime. As of 2026-10-17, [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) has no patched `braces` release. The audit reports the affected dependency chain as five high-severity entries. In this project brace patterns come from checked-in build configuration, not live user uploads or API requests. Do not build untrusted pull requests with secrets, suppress the finding as fixed, or force a Tailwind major upgrade without stylesheet and browser verification.
+Tailwind and Node.js are not installed in the production runtime. Removing the old Tailwind/chokidar/micromatch chain eliminates the unpatched `braces` dependency ([GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)); a lockfile regression prevents its accidental return. `npm audit` reports no findings for this lockfile on 2026-10-17. This is time-sensitive, so rerun the audit for dependency changes rather than treating that result as a permanent guarantee.
 
 ## Server profiles
 

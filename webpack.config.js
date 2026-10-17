@@ -49,12 +49,13 @@ module.exports = (env, argv) => {
     return {
         entry: {
             bundle: './ui/index.js',
-            style: './ui/index.scss'
+            style: './ui/index.css'
         },
         output: {
             filename: '[name].js',
+            chunkFilename: 'chunks/[name].[contenthash:12].js',
             path: path.resolve(__dirname, 'app'),
-            publicPath: "",
+            publicPath: "/",
             clean: true
         },
         resolve: {
@@ -84,7 +85,7 @@ module.exports = (env, argv) => {
                     }
                 },
                 {
-                    test: /\.scss$/,
+                    test: /\.css$/,
                     use: [
                         MiniCssExtractPlugin.loader,
                         {
@@ -93,22 +94,12 @@ module.exports = (env, argv) => {
                                 "sourceMap": !isProduction,
                             }
                         },
-                        "resolve-url-loader",
-                        {
-                            loader: "sass-loader",
-                            options: {
-                                "api": "modern",
-                                // always make sourceMap. resolver-url-loader is needing it
-                                "sourceMap": true,
-                            }
-                        },
                         {
                             loader: 'postcss-loader',
                             options: {
                                 postcssOptions: {
                                     plugins: [
-                                        require('tailwindcss'),
-                                        require('autoprefixer'),
+                                        require('@tailwindcss/postcss'),
                                     ],
                                 }
                             },

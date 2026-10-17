@@ -9,6 +9,8 @@ auth.leveldb*
 conf.json
 *.exe
 build/
+/test-results/
+/playwright-report/
 /mod_packs/*
 /map-snapshots/
 npm-debug.log

@@ -64,7 +64,7 @@ const UserManagement = ({currentUser, canManage = false}) => {
                 : <div className="ui-table-wrap"><table className="ui-table">
                     <thead><tr><th>User</th><th>Role</th><th>Email</th><th className="text-right">Actions</th></tr></thead>
                     <tbody>{users.map(entry => <tr key={entry.username}>
-                        <td><div className="flex items-center gap-3"><div className="grid w-8 h-8 place-items-center rounded-full bg-orange bg-opacity-10 text-orange font-bold">{entry.username.slice(0, 1).toUpperCase()}</div><div><span className="font-bold text-white">{entry.username}</span>{entry.username === currentUser?.username && <span className="ml-2 text-xs text-orange">You</span>}</div></div></td>
+                        <td><div className="flex items-center gap-3"><div className="grid w-8 h-8 place-items-center rounded-full bg-orange/10 text-orange font-bold">{entry.username.slice(0, 1).toUpperCase()}</div><div><span className="font-bold text-white">{entry.username}</span>{entry.username === currentUser?.username && <span className="ml-2 text-xs text-orange">You</span>}</div></div></td>
                         <td><span className="ui-status-badge">{entry.role}</span></td>
                         <td>{entry.email || "—"}</td>
                         <td><div className="flex justify-end"><IconButton type="danger" label={`Delete ${entry.username}`} icon={faTrashAlt} disabled={entry.username === currentUser?.username} onClick={() => setUserToDelete(entry)}/></div></td>

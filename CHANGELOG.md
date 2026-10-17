@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Security
+- Replace the Tailwind 3 build chain with Tailwind 4 and plain CSS, removing the unpatched `braces` dependency (GHSA-vfj7-8cjw-p6xm). Preserve the existing palette and layouts; Sass and its unused loaders are no longer required.
 - Update Go to 1.26.9 across the backend module, container builders, mounted-directory tests and release checks for the upstream HTTP, MIME and TLS security fixes. Existing data, profiles, authentication and configuration remain unchanged.
 
 ### Changed
+- Load management pages on demand with content-hashed route assets. Keep navigation and process controls available when a page fails to load, with an explicit reload action instead of an automatic reload.
+- Add a synthetic browser regression matrix for Chromium, Firefox, WebKit and mobile layouts, covering every route, permissions, disabled operations, error recovery, keyboard use and lazy asset loading.
 - Refresh the pinned Node 24 and Ubuntu 24.04 images and GitHub artifact upload/download actions without changing their major versions.
 - Add a regression check that keeps all Go build and CI versions aligned with the exact patch version in `src/go.mod`.
 - Remove unused frontend dependencies and an unused authentication helper/router, declare the browser event emitter directly, and classify Tailwind as build-only. Generated HTML now stays out of source control together with the other built UI assets.
