@@ -68,7 +68,7 @@ test("navigation loads only the requested page and preserves the dark palette", 
 
 test("help text remains inside the viewport when focused on a narrow screen", async ({page}) => {
     await page.goto("/mods");
-    await expect(page.getByRole("heading", {name: "No mods in this set"})).toBeVisible();
+    await expect(page.getByText("No mods in this set", {exact: true})).toBeVisible();
     const help = page.getByRole("button", {name: "Mods & mod packs help"});
     await help.focus();
     const tooltip = page.getByRole("tooltip");
