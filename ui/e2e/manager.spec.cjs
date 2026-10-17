@@ -8,6 +8,11 @@ test.beforeEach(async ({page}) => {
     page.on("response", response => {
         if (response.status() === 501) page.testFailures.push(`Missing fixture: ${response.url()}`);
     });
+    await page.route(/^https?:\/\//, route => {
+        if (new URL(route.request().url()).origin === "http://127.0.0.1:18089") return route.continue();
+        page.testFailures.push(`Unexpected external asset: ${route.request().url()}`);
+        return route.abort();
+    });
     // No real socket or console commands, even when a scenario says running.
     await page.routeWebSocket("**/ws", () => {});
 });
@@ -36,7 +41,13 @@ test("every authenticated page opens directly with its own lazy assets", async (
         await expect(page.getByRole("heading", {level: 1, name: title, exact: true})).toBeVisible();
         await expect(page.getByRole("status", {name: "Loading page…"})).toHaveCount(0);
         await expect(page.getByText("This page could not be loaded.", {exact: false})).toHaveCount(0);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        const layout = await page.evaluate(() => ({
+            width: document.documentElement.scrollWidth, viewport: window.innerWidth,
+            overflow: [...document.querySelectorAll("main *")].filter(el => el.getBoundingClientRect().right > window.innerWidth + 1)
+                .slice(0, 8).map(el => ({tag: el.tagName, class: el.className, right: el.getBoundingClientRect().right}))
+        }));
+        expect(layout.width, `${url}: ${JSON.stringify(layout)}`).toBeLessThanOrEqual(layout.viewport);
+        await expect.poll(() => page.locator(".ui-brand-mark img").first().evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
     }
 });
 
@@ -50,7 +61,7 @@ test("navigation loads only the requested page and preserves the dark palette", 
     await navigate(page, "Mods");
     await expect(page.getByRole("heading", {level: 1, name: "Mods & mod packs"})).toBeVisible();
     expect(chunks.some(url => /\/mods\./.test(url))).toBe(true);
-    await expect(page.locator(".text-orange").first()).toHaveCSS("color", "rgb(244, 166, 42)");
+    await expect(page.locator(".ui-profile-switcher__icon")).toHaveCSS("color", "rgb(244, 163, 64)");
     await page.goBack();
     await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
 });
@@ -122,9 +133,10 @@ test("failed settings save preserves the draft", async ({page}) => {
 });
 
 test("a failed log request can be retried without reloading the application", async ({page}) => {
-    await page.route("**/api/log/tail**", route => route.fulfill({status: 503, contentType: "text/plain", body: "Unavailable"}), {times: 1});
+    await page.route("**/api/log/tail**", route => route.fulfill({status: 503, contentType: "text/plain", body: "Unavailable"}));
     await page.goto("/logs");
     await expect(page.getByRole("alert")).toContainText("Factorio logs could not be loaded");
+    await page.unroute("**/api/log/tail**");
     await page.getByRole("button", {name: "Refresh", exact: true}).click();
     await expect(page.getByText("Synthetic test log", {exact: false})).toBeVisible();
 });
@@ -139,7 +151,12 @@ test("profile picker works from the keyboard and links to new profile setup", as
     await expect(picker).toHaveAttribute("aria-expanded", "true");
     await page.keyboard.press("Escape");
     await expect(picker).toHaveAttribute("aria-expanded", "false");
-    if (await openNavigation.isVisible()) await openNavigation.click();
+    await expect(picker).toBeFocused();
+    if (await openNavigation.isVisible()) {
+        await page.keyboard.press("Escape");
+        await expect(openNavigation).toBeFocused();
+        await openNavigation.click();
+    }
     await picker.focus();
     await page.keyboard.press("Enter");
     await page.getByRole("link", {name: "New profile", exact: true}).click();

@@ -114,11 +114,11 @@ module.exports = (env, argv) => {
                             options: {
                                 name: loader_path => {
                                     if (!/node_modules/.test(loader_path)) {
-                                        return "/images/[name].[ext]?[hash]";
+                                        return "images/[name].[ext]?[hash]";
                                     }
 
                                     return (
-                                        "/images/vendor/" +
+                                        "images/vendor/" +
                                         loader_path.replace(/\\/g, "/")
                                             .replace(/((.*(node_modules))|images|image|img|assets)\//g, '') +
                                         '?[hash]'
@@ -136,11 +136,11 @@ module.exports = (env, argv) => {
                             options: {
                                 name: loader_path => {
                                     if (!/node_modules/.test(loader_path)) {
-                                        return '/fonts/[name].[ext]?[hash]';
+                                        return 'fonts/[name].[ext]?[hash]';
                                     }
 
                                     return (
-                                        '/fonts/vendor/' +
+                                        'fonts/vendor/' +
                                         loader_path
                                             .replace(/\\/g, '/')
                                             .replace(/((.*(node_modules))|fonts|font|assets)\//g, '') +
