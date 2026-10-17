@@ -1,6 +1,6 @@
 # Project quality review — 2026-10-17
 
-This review started from `main` at `d74221f`, with application version 0.20.0. It covers runtime boundaries, HTTP handlers, authentication, profile/UI state, archives, locking, dependencies, build configuration, tests and documentation. It does not publish a release, change deployed installations or certify that every possible workflow is defect-free.
+This review started from `main` at `d74221f`, with application version 0.20.0. The follow-up work below addresses its five outstanding items. It covers runtime boundaries, HTTP handlers, authentication, profile/UI state, archives, locking, dependencies, build configuration, tests and documentation. It does not publish a release, change deployed installations or certify that every possible workflow is defect-free.
 
 The main weaknesses found were inconsistent behavior between old and new code paths, asynchronous UI state ownership, and gaps in regression coverage. The fixes preserve the one-server model, existing profiles, saved game versions, credentials, storage paths and mount layouts.
 
@@ -26,7 +26,7 @@ Each bug fix was preceded by a failing regression where the behavior is covered 
 
 - Remove unused direct dependencies: `classnames`, `locks`, `prop-types`, `react-native-listener`, `style-loader` and `webpack-fix-style-only-entries`. Keep required transitive dependencies in the lockfile.
 - Declare `events` directly because the browser code imports it; do not depend on Webpack to supply it accidentally.
-- Classify Tailwind as a build dependency and add the matching React 18 test renderer as a test dependency. This classification does **not** resolve its security advisory.
+- Classify Tailwind as a build dependency and add the matching React 18 test renderer as a test dependency. Classification alone did not resolve the advisory; the subsequent Tailwind 4 migration removes the affected dependency chain.
 - Remove the unused authentication helper and empty router declaration; preserve public routes and their method/role/stopped-state guards.
 - Stop tracking the stale generated `app/index.html`. The complete `app/` directory is rebuilt from `ui/` and ignored, matching existing container/release builds and repository policy.
 - Document operations, recovery, local isolation and test boundaries in [OPERATIONS.md](OPERATIONS.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and [TECHNICAL-NOTES.md](../TECHNICAL-NOTES.md). Correct the earlier claim that ordinary CI runs a live RCON/checkpoint scenario.
@@ -46,7 +46,7 @@ No business feature was removed just to shorten the code, and no cosmetic rewrit
 
 The existing saves screenshot depicts a stopped server and remains representative: uploads stay available in that state. No layout, menu or branding redesign was introduced by this review.
 
-## Verification performed locally
+## Initial audit verification
 
 Windows, Node.js 24.19.0 and the required Go 1.26.9 toolchain:
 
@@ -59,12 +59,20 @@ Windows, Node.js 24.19.0 and the required Go 1.26.9 toolchain:
 
 Pull requests must also pass the existing Linux/Windows CI matrix, production image build, mounted-directory/persistence checks and the added file-lock/WebSocket race checks before merging. Local synthetic browser checks do not replace those jobs or a live-engine test.
 
-## Open risks and next useful work
+## Follow-up implementation and verification
 
-1. **Unpatched build advisory:** `npm audit` reports five high-severity entries along one `braces` dependency chain. [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) has no patched release as of this review. It affects build-time brace expansion here, not runtime HTTP input. Do not treat moving Tailwind to dev dependencies as a fix. A separately tested Tailwind migration or an upstream patch remains necessary to remove the dependency.
-2. **End-to-end coverage:** automate a disposable real-engine matrix for creation, save/mod import, checkpoint restore and container restart. The optional world smoke script is not yet a CI substitute. Keep licensed engines, accounts and private saves outside published fixtures.
-3. **Browser coverage:** component tests now cover important races, but there is no automated browser matrix for every page, keyboard path, mobile layout and failed operation. This review's focused synthetic smoke test is narrower than that goal.
-4. **Coverage depth:** the current statement percentage leaves substantial unexercised startup, process-control and error branches. Add tests around observed risk instead of padding the percentage with assertions that repeat the implementation.
-5. **Frontend size:** the application still ships one main JavaScript bundle (about 817 KiB uncompressed in this build). Route-level code splitting could reduce first-load work; it needs independent navigation/cache/error testing, not removal of useful views.
+| Original follow-up | Implementation and evidence |
+| --- | --- |
+| Unpatched build advisory | Migrate to Tailwind 4 and its PostCSS integration; remove the unused Sass/resolve-url/autoprefixer chain. The lockfile contains no `braces`, and `npm audit` reports **zero vulnerabilities** on 2026-10-17. Tests compile the actual stylesheet and check existing colors, responsive utilities and opacity. Browser support is now Chrome 111+, Safari 16.4+ and Firefox 128+. |
+| Disposable real-engine tests | `scripts/test-container-lifecycle.py` creates its own labelled containers and volumes. Both **Factorio 2.0.77 with combined storage** and **Space Age 2.1.20 with split storage** pass locally: original fixture-mod upload, engine-evaluated startup settings, world creation, byte-preserving save upload, live RCON readiness, checkpoint creation/restore, running-state guards, autostart, restart and full container recreation. The same two scenarios are mandatory CI steps after the existing mounted-directory checks. |
+| Browser matrix | Add **55 scenarios** across desktop Chromium, Firefox and WebKit plus mobile Chromium/WebKit emulation. They cover all ten authenticated routes, anonymous/viewer access, keyboard profile selection, running/unknown-state restrictions, failed operations with retained drafts, lazy-asset navigation and recovery. The synthetic API is loopback-only and unexpected external requests fail the tests. The matrix exposed and now covers mobile focus loss, nested Escape handling, hidden-tooltip overflow and off-screen help text. |
+| Startup and shutdown risk | New regressions reproduce a stopped-server `Stop` call incorrectly locking the runtime, and a failed startup leaving a queued stop/reservation behind. Fix both using the existing state mutex. Shutdown also waits for a pending startup, not just an already running child, within its existing timeout. Tests cover invalid settings without losing the selected save, stopped/pending/stopping shutdown and bounded error handling. The targeted Linux race suite includes these paths. |
+| Frontend size and loading | Lazy-load the ten management views while retaining the shell, controls and login. The production main bundle drops from about **817 KiB to 450 KiB uncompressed**; shared and current-route chunks still load as needed. Hashed chunks use same-origin root-relative URLs, including direct deep links. A failed chunk leaves navigation available and offers an explicit reload rather than discarding work automatically. All existing views remain. |
 
-These are explicit follow-up boundaries, not silently completed work or a reason to call the software perfect.
+The follow-up local baseline passes **50 Node/UI tests**, **13 Python validator tests**, the Unraid validator, the full short Go suite, `go vet`, the production UI/image builds and both real-engine scenarios above. `govulncheck@v1.7.0` still reports no reachable or imported-package finding; the unused-module advisory described in the initial audit remains distinct from the clean npm result. CI runs the browser matrix, Windows/Linux suites, race checks, mounted-directory tests and real-engine scenarios before merge. The existing desktop screenshots remain representative; no menu, branding or business-feature redesign is part of this work.
+
+## Remaining test boundaries
+
+- Successful authenticated Mod Portal download/import needs a Factorio account. CI includes no portal account or private save: the real-engine scenarios instead prove that an import rejected for missing credentials preserves installed mods, game mode and save bytes. Existing Go tests cover successful import planning, staged changes and rollback using controlled fixtures. A credentialed production-portal smoke test remains a manual check.
+- The engine matrix uses two exact representative versions and a tiny generated world, not every historical version, third-party mod combination or large factory. Browser mobile projects emulate devices rather than running on physical phones; native operating-system file dialogs are outside this matrix.
+- Coverage is risk-based, not a claim of complete branch or behavior coverage. The fixes and continuous checks close the five scoped follow-ups without declaring the software defect-free.
