@@ -281,7 +281,7 @@ Requirements:
 
 Keep the exact Go patch version synchronized across `src/go.mod`, both Go builder images, the mounted-directory test image and the CI/release version checks. Run `python3 -m unittest discover -s scripts/tests -v` to check this alignment and the release metadata.
 
-The production image contains the compiled Go backend and generated static UI assets, not Node.js or `node_modules`. JavaScript dependency alerts still require build-time review: the current Tailwind 3 toolchain uses `braces` only while building the UI, not when processing requests in the running manager. Do not apply a breaking Tailwind upgrade solely to silence an audit warning.
+The production image contains the compiled Go backend and generated static UI assets, not Node.js or `node_modules`. The Tailwind 4/plain-CSS build removes the vulnerable Tailwind 3 `braces` chain. Dependency alerts still require review of both build tools and shipped code. The interface requires Chrome 111+, Safari 16.4+ or Firefox 128+; management pages load on demand without removing existing features.
 
 Build and test the application from the repository root:
 

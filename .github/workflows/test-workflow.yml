@@ -31,6 +31,26 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+  test-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browser
+      - name: Retain synthetic browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-failures
+          path: test-results/
+          retention-days: 7
   test-go:
     strategy:
       matrix:
@@ -51,6 +71,7 @@ jobs:
           go test ./... -short -count=1
           go test ./factorio ./api -race -short -run 'Test(ModPackMerge|MergeModPack|ModPortalPreferences|ModPortalOptionalDefaults)' -count=1
           go test ./lockfile ./api/websocket -race -short -count=1
+          go test . ./factorio -race -short -run 'Test(Shutdown|StopAlreadyStopped|FailedStartup|InvalidStartupSettings|ParallelStart)' -count=1
           go vet ./...
           go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - if: contains(matrix.os, 'windows')
@@ -65,8 +86,9 @@ jobs:
           python3 -m unittest discover -s scripts/tests -v
           python3 scripts/validate-unraid-template.py
   docker-build:
-    needs: [test-npm, test-go, test-unraid-template]
+    needs: [test-npm, test-go, test-unraid-template, test-browser]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Test replacement operations on mounted Factorio directories
@@ -111,3 +133,7 @@ jobs:
             --mount type=tmpfs,destination=/opt/factorio/mods \
             --mount type=tmpfs,destination=/opt/factorio/config \
             factorio-server-manager:ci true
+      - name: Real-engine lifecycle with combined persistent storage
+        run: python3 scripts/test-container-lifecycle.py --disposable --version 2.0.77 --mode factorio --layout combined
+      - name: Real-engine lifecycle with split Unraid storage and Space Age
+        run: python3 scripts/test-container-lifecycle.py --disposable --version 2.1.20 --mode space-age --layout split

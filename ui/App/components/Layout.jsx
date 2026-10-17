@@ -12,7 +12,8 @@ import HelpTip from "./HelpTip";
 import {useProfiles} from "../context/ProfileContext";
 import profilesResource from "../../api/resources/profiles";
 import BrandMark from "./BrandMark";
-import {lockBodyScroll} from "./overlay";
+import {focusableElements, lockBodyScroll, trapFocus} from "./overlay";
+import RouteContent from "./RouteContent";
 
 const profileLinks = [
     ["Overview", "/", faGaugeHigh],
@@ -71,6 +72,8 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
     const [switchingProfileID, setSwitchingProfileID] = useState("");
     const profileMenuRef = useRef(null);
+    const profileMenuOpenRef = useRef(isProfileMenuOpen);
+    profileMenuOpenRef.current = isProfileMenuOpen;
     const sidebarRef = useRef(null);
     const location = useLocation();
     const {state, activeProfile, isLoading: isLoadingProfile, applyProfileState} = useProfiles();
@@ -113,7 +116,11 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
             if (!profileMenuRef.current?.contains(event.target)) setIsProfileMenuOpen(false);
         };
         const closeOnEscape = event => {
-            if (event.key === "Escape") setIsProfileMenuOpen(false);
+            if (event.key === "Escape") {
+                event.preventDefault();
+                setIsProfileMenuOpen(false);
+                profileMenuRef.current?.querySelector(".ui-profile-switcher")?.focus();
+            }
         };
         document.addEventListener("pointerdown", closeOnOutsideClick);
         document.addEventListener("keydown", closeOnEscape);
@@ -125,14 +132,23 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
 
     useEffect(() => {
         if (!isNavOpen || !isCompactNavigation) return undefined;
+        const previouslyFocused = document.activeElement;
+        // The preceding effect has removed inert. Focus now so a delayed frame
+        // cannot steal focus from a profile-picker interaction after opening.
+        focusableElements(sidebarRef.current)[0]?.focus();
         const closeOnEscape = event => {
-            if (event.key === "Escape") setIsNavOpen(false);
+            if (event.key === "Escape" && !profileMenuOpenRef.current) {
+                event.preventDefault();
+                setIsNavOpen(false);
+            }
+            trapFocus(event, sidebarRef.current);
         };
         const unlockBodyScroll = lockBodyScroll();
         document.addEventListener("keydown", closeOnEscape);
         return () => {
             unlockBodyScroll();
             document.removeEventListener("keydown", closeOnEscape);
+            if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) previouslyFocused.focus();
         };
     }, [isCompactNavigation, isNavOpen]);
 
@@ -272,7 +288,9 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
         <main className="ui-main">
             <ProfileContextBar serverStatus={serverStatus} refreshServerStatus={refreshServerStatus} canManage={canManage}/>
             <div className="ui-page">
-                <Outlet key={outletKey}/>
+                <RouteContent key={`${outletKey}:${location.pathname}`}>
+                    <Outlet/>
+                </RouteContent>
             </div>
         </main>
 

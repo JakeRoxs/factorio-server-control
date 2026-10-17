@@ -32,7 +32,9 @@ func (server *Server) Kill() error {
 }
 
 func (server *Server) Stop() error {
-	server.SetStopping(true)
+	if !server.requestStop() {
+		return nil
+	}
 	if !server.claimStopSignalIfReady() {
 		log.Printf("Factorio is still starting; safe shutdown is queued until startup completes")
 		return nil

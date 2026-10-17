@@ -70,7 +70,7 @@ const DependencyInstallForm = ({plan, isOpen, close, onToggleOptional, onInstall
                         <span className="text-xs text-gray-light">Selected automatically</span>
                     </div>
                     {required.length === 0
-                        ? <div className="rounded-lg border border-white border-opacity-5 p-3 text-sm text-gray-light"><FontAwesomeIcon className="mr-2 text-green" icon={faCheck}/>No additional required downloads.</div>
+                        ? <div className="rounded-lg border border-white/5 p-3 text-sm text-gray-light"><FontAwesomeIcon className="mr-2 text-green" icon={faCheck}/>No additional required downloads.</div>
                         : <div className="space-y-2">{required.map(item => <RequiredDependency key={item.name} item={item}/>)}</div>}
                 </section>
 

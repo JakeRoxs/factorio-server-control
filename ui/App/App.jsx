@@ -1,24 +1,26 @@
-import React, {useCallback, useEffect, useState} from "react";
+import React, {lazy, useCallback, useEffect, useState} from "react";
 import {BrowserRouter, Navigate, Outlet, Route, Routes} from "react-router-dom";
 import user from "../api/resources/user";
 import server from "../api/resources/server";
 import socket from "../api/socket";
 import Layout from "./components/Layout";
 import Login from "./views/Login";
-import Controls from "./views/Controls";
-import Logs from "./views/Logs";
-import Saves from "./views/Saves/Saves";
-import Mods from "./views/Mods/Mods";
-import UserManagement from "./views/UserManagement/UserManagment";
-import ServerSettings from "./views/ServerSettings";
-import GameSettings from "./views/GameSettings";
-import Console from "./views/Console";
-import Releases from "./views/Releases";
-import Profiles from "./views/Profiles";
 import {Flash} from "./components/Flash";
 import {ProfileProvider} from "./context/ProfileContext";
 import BrandMark from "./components/BrandMark";
 import {authenticationRequiredEvent} from "../api/client";
+
+// Keep authentication and the navigation shell available while a page loads.
+const Controls = lazy(() => import(/* webpackChunkName: "overview" */ "./views/Controls"));
+const Logs = lazy(() => import(/* webpackChunkName: "logs" */ "./views/Logs"));
+const Saves = lazy(() => import(/* webpackChunkName: "saves" */ "./views/Saves/Saves"));
+const Mods = lazy(() => import(/* webpackChunkName: "mods" */ "./views/Mods/Mods"));
+const UserManagement = lazy(() => import(/* webpackChunkName: "users" */ "./views/UserManagement/UserManagment"));
+const ServerSettings = lazy(() => import(/* webpackChunkName: "server-settings" */ "./views/ServerSettings"));
+const GameSettings = lazy(() => import(/* webpackChunkName: "game-settings" */ "./views/GameSettings"));
+const Console = lazy(() => import(/* webpackChunkName: "console" */ "./views/Console"));
+const Releases = lazy(() => import(/* webpackChunkName: "releases" */ "./views/Releases"));
+const Profiles = lazy(() => import(/* webpackChunkName: "profiles" */ "./views/Profiles"));
 
 const AppLoader = () => <div className="ui-login-shell">
     <div className="text-center">

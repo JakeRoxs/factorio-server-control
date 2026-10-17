@@ -17,3 +17,12 @@ test("development retains source maps without minification", () => {
     assert.equal(config.optimization.minimize, false);
     assert.equal(config.devtool, "source-map");
 });
+
+test("lazy pages use root-relative content-hashed assets across navigation and updates", () => {
+    const config = configure({}, {mode: "production"});
+    assert.equal(config.output.publicPath, "/");
+    assert.match(config.output.chunkFilename, /^chunks\/.*\[contenthash/);
+    assert.equal(config.output.clean, true);
+    const imageRule = config.module.rules.find(rule => rule.test.test("brand.png"));
+    assert.equal(imageRule.use[0].options.name("ui/assets/brand.png"), "images/[name].[ext]?[hash]");
+});

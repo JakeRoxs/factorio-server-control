@@ -59,7 +59,7 @@ const GameSettings = () => {
                     key={category}
                     title={humanize(category)}
                     headerAction={<div className="flex flex-wrap items-center justify-end gap-2"><span className="ui-status-badge">{Object.keys(values).length} {Object.keys(values).length === 1 ? "value" : "values"}</span><ScopeBadge/></div>}
-                    content={<dl>{Object.entries(values).map(([name, value]) => <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2.5 border-b border-white border-opacity-5 last:border-0" key={name}>
+                    content={<dl>{Object.entries(values).map(([name, value]) => <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2.5 border-b border-white/5 last:border-0" key={name}>
                             <dt className="text-sm text-gray-light">{humanize(name)}</dt>
                             <dd className="font-mono text-sm text-white break-all">{String(value)}</dd>
                         </div>)}</dl>}

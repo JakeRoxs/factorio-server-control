@@ -97,8 +97,19 @@ func shutdownHTTPServer(server *http.Server) {
 }
 
 func shutdownFactorioServer(timeout time.Duration) {
-	server := factorio.GetFactorioServer()
-	if !server.GetRunning() {
+	shutdownFactorioProcess(factorio.GetFactorioServer(), timeout)
+}
+
+type shutdownProcess interface {
+	IsBusy() bool
+	IsStopping() bool
+	Stop() error
+}
+
+func shutdownFactorioProcess(server shutdownProcess, timeout time.Duration) {
+	// Startup is also busy: a process may not have been published as running
+	// yet, but still must be stopped before its manager exits.
+	if !server.IsBusy() {
 		return
 	}
 
@@ -121,7 +132,7 @@ func shutdownFactorioServer(timeout time.Duration) {
 	defer ticker.Stop()
 	timeoutTimer := time.NewTimer(remaining)
 	defer timeoutTimer.Stop()
-	for server.GetRunning() {
+	for server.IsBusy() {
 		select {
 		case err := <-stopResult:
 			stopResult = nil

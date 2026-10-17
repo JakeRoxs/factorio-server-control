@@ -32,7 +32,7 @@ const ModPack = ({modPack, reloadModPacks, factorioVersion, reloadMods, profileL
     };
 
     return <div className="ui-subcard overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-b border-white border-opacity-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-b border-white/5">
             <div><h3 className="font-bold text-white">{modPack.name}</h3><p className="text-xs text-gray-light">{modPack.mods?.mods?.length || 0} mods</p></div>
             <div className="flex flex-wrap gap-2">
                 <ButtonLink size="sm" type="ghost" href={`/api/mods/packs/${encodeURIComponent(modPack.name)}/download`}>

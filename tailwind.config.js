@@ -1,12 +1,4 @@
 module.exports = {
-  future: {
-    removeDeprecatedGapUtilities: true,
-    purgeLayersByDefault: true,
-  },
-  content: [
-    './ui/**/*.jsx',
-    './ui/**/*.html',
-  ],
   theme: {
     extend: {
       width: {
@@ -53,9 +45,6 @@ module.exports = {
     maxWidth: {
       '1/2': '50%',
     }
-  },
-  variants: {
-    maxWidth: ['responsive']
   },
   plugins: [],
 }
