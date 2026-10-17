@@ -179,6 +179,14 @@ class DisposableManager:
         state = self.api("GET", "/profiles")
         return next(profile for profile in state["profiles"] if profile["id"] == state["active_profile_id"])
 
+    def select_save(self, name):
+        # Match the UI's persisted "Save startup configuration" action. A
+        # one-off /server/start request does not write the profile manifest.
+        profile_id = self.active_profile()["id"]
+        self.api("PUT", "/profiles/" + profile_id + "/startup",
+                 {"bind_ip": "0.0.0.0", "port": 34197, "selected_save": name})
+        check(self.active_profile()["selected_save"] == name, "Profile selection was not saved")
+
     def mod_value(self):
         view = self.api("GET", "/mods/startup-settings")
         setting = next(item for group in view["groups"] for item in group["settings"] if item["name"] == SETTING)
@@ -237,6 +245,7 @@ def run_scenario(manager, mode):
     check(api("GET", "/saves/dl/quality-upload.zip", raw=True) == original, "Rejected import changed save")
     print("World creation, save import and failed mod-import preservation: OK", flush=True)
 
+    manager.select_save("quality-upload.zip")
     api("POST", "/server/start", {"bindip": "0.0.0.0", "port": 34197, "savefile": "quality-upload.zip"})
     manager.wait_game()
     manager.reject("DELETE", "/saves/rm/quality-upload.zip", 423)
@@ -250,6 +259,7 @@ def run_scenario(manager, mode):
     check(api("GET", "/saves/dl/" + restored, raw=True) == checkpoint_bytes, "Checkpoint restore changed bytes")
     check(api("GET", checkpoint_path + "/download", raw=True) == checkpoint_bytes, "Restore changed fixed checkpoint")
     api("PUT", "/server/autostart", {"enabled": True})
+    manager.select_save(restored)
     profile_id = manager.active_profile()["id"]
     api("POST", "/server/start", {"bindip": "0.0.0.0", "port": 34197, "savefile": restored})
     manager.wait_game()

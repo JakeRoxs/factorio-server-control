@@ -133,7 +133,9 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
     useEffect(() => {
         if (!isNavOpen || !isCompactNavigation) return undefined;
         const previouslyFocused = document.activeElement;
-        const focusNavigation = window.requestAnimationFrame(() => focusableElements(sidebarRef.current)[0]?.focus());
+        // The preceding effect has removed inert. Focus now so a delayed frame
+        // cannot steal focus from a profile-picker interaction after opening.
+        focusableElements(sidebarRef.current)[0]?.focus();
         const closeOnEscape = event => {
             if (event.key === "Escape" && !profileMenuOpenRef.current) {
                 event.preventDefault();
@@ -144,7 +146,6 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
         const unlockBodyScroll = lockBodyScroll();
         document.addEventListener("keydown", closeOnEscape);
         return () => {
-            window.cancelAnimationFrame(focusNavigation);
             unlockBodyScroll();
             document.removeEventListener("keydown", closeOnEscape);
             if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) previouslyFocused.focus();

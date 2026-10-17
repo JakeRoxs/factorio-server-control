@@ -68,6 +68,7 @@ test("navigation loads only the requested page and preserves the dark palette", 
 
 test("help text remains inside the viewport when focused on a narrow screen", async ({page}) => {
     await page.goto("/mods");
+    await expect(page.getByRole("heading", {name: "No mods in this set"})).toBeVisible();
     const help = page.getByRole("button", {name: "Mods & mod packs help"});
     await help.focus();
     const tooltip = page.getByRole("tooltip");
@@ -157,7 +158,11 @@ test("profile picker works from the keyboard and links to new profile setup", as
     await page.goto("/");
     await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
     const openNavigation = page.getByRole("button", {name: "Open navigation", exact: true});
-    if (await openNavigation.isVisible()) await openNavigation.click();
+    const compact = await openNavigation.isVisible();
+    if (compact) {
+        await openNavigation.click();
+        await expect(page.getByRole("button", {name: "Close navigation", exact: true})).toBeFocused();
+    }
     const picker = page.getByRole("button", {name: /Active profile Demo factory/});
     await picker.focus();
     await page.keyboard.press("Enter");
@@ -165,13 +170,15 @@ test("profile picker works from the keyboard and links to new profile setup", as
     await page.keyboard.press("Escape");
     await expect(picker).toHaveAttribute("aria-expanded", "false");
     await expect(picker).toBeFocused();
-    if (await openNavigation.isVisible()) {
+    if (compact) {
         await page.keyboard.press("Escape");
         await expect(openNavigation).toBeFocused();
         await openNavigation.click();
+        await expect(page.getByRole("button", {name: "Close navigation", exact: true})).toBeFocused();
     }
     await picker.focus();
     await page.keyboard.press("Enter");
+    await expect(picker).toHaveAttribute("aria-expanded", "true");
     await page.getByRole("link", {name: "New profile", exact: true}).click();
     await expect(page).toHaveURL(/\/profiles\?new=fresh$/);
     await expect(page.getByRole("heading", {level: 1, name: "Profiles"})).toBeVisible();

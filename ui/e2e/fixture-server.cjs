@@ -25,7 +25,7 @@ const api = {
     "/api/settings": {name: "Demo server", description: "Synthetic browser test", max_players: 8, auto_pause: true, visibility: {public: false, lan: true}},
     "/api/config": {network: {port: 34197}, other: {autosave_interval: 10}},
     "/api/log/tail": ["Synthetic test log — no real game output"],
-    "/api/mods/list": {mods: []},
+    "/api/mods/list": [],
     "/api/mods/packs/list": [],
     "/api/mods/portal/list": {factorio_version: "2.0", results: []},
     "/api/mods/portal/loginstatus": false,
