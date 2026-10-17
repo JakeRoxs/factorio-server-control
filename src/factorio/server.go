@@ -109,6 +109,20 @@ func (server *Server) SetStopping(stopping bool) {
 	server.broadcastStatus()
 }
 
+// A stop can race process exit, or arrive while startup owns its reservation.
+// Queue it only for a live/start-pending runtime, never a fully stopped one.
+func (server *Server) requestStop() bool {
+	stateMutex.Lock()
+	if !server.Running && !server.starting {
+		stateMutex.Unlock()
+		return false
+	}
+	server.Stopping = true
+	stateMutex.Unlock()
+	server.broadcastStatus()
+	return true
+}
+
 func (server *Server) broadcastStatus() {
 	wsRoom := websocket.WebsocketHub.GetRoom("server_status")
 	response, err := json.Marshal(server.Snapshot())
@@ -696,7 +710,11 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 		}
 		stateMutex.Lock()
 		server.starting = false
+		server.Stopping = false
+		server.startupReady = false
+		server.stopSignaled = false
 		stateMutex.Unlock()
+		server.broadcastStatus()
 	}()
 
 	config := bootstrap.GetConfig()
