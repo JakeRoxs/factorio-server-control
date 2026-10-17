@@ -5,7 +5,10 @@ const IconButton = ({icon, label, onClick, type = "default", disabled = false, s
     <button
         type="button"
         className={`${className} ui-icon-button${type === "danger" ? " ui-icon-button--danger" : ""}`}
-        onClick={onClick}
+        onClick={event => {
+            event.currentTarget.focus({preventScroll: true});
+            onClick?.(event);
+        }}
         disabled={disabled}
         aria-label={label}
         title={label}

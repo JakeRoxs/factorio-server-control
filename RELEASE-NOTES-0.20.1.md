@@ -25,6 +25,7 @@
 - Mod ZIP downloads preserve nested paths instead of flattening duplicate filenames. Equivalent file paths share locks, and unused lock entries are released.
 - Legacy save creation uses the shared staged world generator and refuses to overwrite an existing save. Replacement version parsing is atomic and clears omitted components.
 - Cancelled requests remain quiet; structured API errors become safe notification text. Mobile navigation retains keyboard focus, closes nested profile menus in order and keeps help text on screen.
+- Closing a dialog or mobile navigation restores focus to its trigger, including browsers that do not focus buttons when clicked.
 
 ## Security and privacy
 

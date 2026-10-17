@@ -7,7 +7,12 @@ const Button = ({children, type = "default", onClick, isSubmit, className = "", 
 
     return (
         <button
-            onClick={onClick}
+            onClick={event => {
+                // Safari may not focus clicked buttons. Dialogs need their
+                // trigger focused before opening to restore it on dismissal.
+                event.currentTarget.focus({preventScroll: true});
+                onClick?.(event);
+            }}
             disabled={isDisabled || isLoading}
             className={`${className} ui-button ui-button--${variant}${size === "sm" ? " ui-button--sm" : ""}`}
             type={isSubmit ? "submit" : "button"}

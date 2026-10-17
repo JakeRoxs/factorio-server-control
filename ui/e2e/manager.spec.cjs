@@ -27,6 +27,14 @@ async function navigate(page, label) {
     await nav.getByRole("link", {name: label, exact: true}).click();
 }
 
+async function disableNativePointerFocus(page) {
+    // Safari does not focus buttons on pointer activation. Reproduce that
+    // behavior on every engine so focus restoration cannot pass by accident.
+    await page.addInitScript(() => document.addEventListener("mousedown", event => {
+        if (event.target.closest("button")) event.preventDefault();
+    }));
+}
+
 const routes = [
     ["/", "Overview"], ["/saves", "Saves & checkpoints"], ["/mods", "Mods & mod packs"],
     ["/server-settings", "Server settings"], ["/game-settings", "Game settings"],
@@ -121,6 +129,7 @@ test("viewer pages do not expose mutations or the admin console", async ({page})
 });
 
 test("failed save deletion keeps the save and its confirmation recoverable", async ({page}) => {
+    await disableNativePointerFocus(page);
     await page.goto("/saves");
     const remove = page.getByRole("button", {name: "Delete demo.zip"});
     await remove.click();
@@ -132,6 +141,18 @@ test("failed save deletion keeps the save and its confirmation recoverable", asy
     await expect(dialog).toHaveCount(0);
     await expect(remove).toBeFocused();
     await expect(page.getByRole("link", {name: "Download demo.zip"})).toBeVisible();
+});
+
+test("a dismissed mod-pack dialog restores focus without native pointer focus", async ({page}) => {
+    await disableNativePointerFocus(page);
+    await page.goto("/mods");
+    const create = page.getByRole("button", {name: "Save current mod set", exact: true});
+    await create.click();
+    const dialog = page.getByRole("dialog", {name: "Create mod pack"});
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(create).toBeFocused();
 });
 
 test("failed settings save preserves the draft", async ({page}) => {
@@ -155,6 +176,7 @@ test("a failed log request can be retried without reloading the application", as
 });
 
 test("profile picker works from the keyboard and links to new profile setup", async ({page}) => {
+    await disableNativePointerFocus(page);
     await page.goto("/");
     await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
     const openNavigation = page.getByRole("button", {name: "Open navigation", exact: true});
