@@ -887,6 +887,7 @@ textarea:focus-visible {
 }
 
 .ui-help-tip__content {
+  display: none;
   position: absolute;
   z-index: 100;
   top: calc(100% + 0.45rem);
@@ -912,6 +913,7 @@ textarea:focus-visible {
 
 .ui-help-tip:hover .ui-help-tip__content,
 .ui-help-tip:focus-within .ui-help-tip__content {
+  display: block;
   opacity: 1;
   transform: translate(-50%, 0);
 }
@@ -3400,6 +3402,21 @@ textarea.ui-input,
 }
 
 @media (max-width: 767px) {
+  .ui-help-tip__content {
+    position: fixed;
+    top: auto;
+    right: 1rem;
+    bottom: calc(5.5rem + env(safe-area-inset-bottom));
+    left: 1rem;
+    width: auto;
+    max-width: none;
+  }
+
+  .ui-help-tip:hover .ui-help-tip__content,
+  .ui-help-tip:focus-within .ui-help-tip__content {
+    transform: none;
+  }
+
   .ui-map-lightbox {
     padding: 0.5rem;
   }

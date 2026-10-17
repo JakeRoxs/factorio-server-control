@@ -66,6 +66,18 @@ test("navigation loads only the requested page and preserves the dark palette", 
     await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
 });
 
+test("help text remains inside the viewport when focused on a narrow screen", async ({page}) => {
+    await page.goto("/mods");
+    const help = page.getByRole("button", {name: "Mods & mod packs help"});
+    await help.focus();
+    const tooltip = page.getByRole("tooltip");
+    await expect(tooltip).toBeVisible();
+    const bounds = await tooltip.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize().width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test("a missing page chunk retains navigation and offers an explicit reload", async ({page}) => {
     page.expectChunkFailure = true;
     await page.route("**/chunks/logs.*.js", route => route.fulfill({status: 404, body: ""}));
