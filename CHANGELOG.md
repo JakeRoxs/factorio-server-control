@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-10-17
+
 ### Security
 - Replace the Tailwind 3 build chain with Tailwind 4 and plain CSS, removing the unpatched `braces` dependency (GHSA-vfj7-8cjw-p6xm). Preserve the existing palette and layouts; Sass and its unused loaders are no longer required.
 - Update Go to 1.26.9 across the backend module, container builders, mounted-directory tests and release checks for the upstream HTTP, MIME and TLS security fixes. Existing data, profiles, authentication and configuration remain unchanged.

@@ -70,10 +70,11 @@ A self-hosted web interface for operating one Factorio dedicated server safely: 
 
 - Responsive **Foundry Night** UI for desktop and mobile.
 - Persistent active-profile context, exact UI version/revision and cache-busted frontend assets.
+- On-demand page loading with explicit recovery after a failed asset request; no automatic reload discards open work. Supported browsers: Chrome 111+, Safari 16.4+ or Firefox 128+.
 - Docker and Docker Compose builds produced directly from this repository.
 - `linux/amd64` production image matching the official Factorio headless server platform.
 - Split-path Unraid support without an overlapping `/opt/factorio` mount.
-- Linux and Windows backend/frontend CI plus a production-container persistence test.
+- Linux/Windows backend tests, Chromium/Firefox/WebKit browser checks and disposable real-engine container tests for base Factorio and Space Age with combined/split persistence.
 
 The implementation details and deliberate boundaries are documented in [TECHNICAL-NOTES.md](TECHNICAL-NOTES.md). See the [operations guide](docs/OPERATIONS.md) for permissions, troubleshooting and backup recovery, and the [contributor guide](CONTRIBUTING.md) for development and verification. User-visible changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
