@@ -42,6 +42,7 @@
 - Frontend component tests cover pure helpers, the actual profile provider, save-upload guards, API errors, route failures and WebSocket lifecycle through isolated adapters. The browser matrix exercises the production UI with synthetic API data; it does not claim to test a real game engine.
 - Tailwind 4 processes plain CSS with its PostCSS plugin. Webpack extracts and minifies styles; no Sass preprocessing is needed. Supported browsers meet Tailwind's baseline: Chrome 111+, Safari 16.4+ or Firefox 128+.
 - Authentication and navigation load first; management pages use content-hashed asynchronous chunks. A failed page retains the navigation shell and offers an explicit reload. No automatic refresh discards open work after a container update.
+- The disposable container matrix exercises two exact engine/mode/storage scenarios, including live RCON checkpoints, settings evaluation, autostart and recreation. It uses generated test data and no Mod Portal credentials; authenticated downloads and arbitrary third-party mods remain outside that matrix. See [Contributing](CONTRIBUTING.md#disposable-real-engine-container-matrix).
 - The manager should be exposed through a trusted internal network, VPN or a properly secured reverse proxy.
 - Profiles intentionally duplicate their archived saves, mods and configuration below manager storage. This favors transparent rollback and simple recovery over deduplicated storage.
 

@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Update Go to 1.26.9 across the backend module, container builders, mounted-directory tests and release checks for the upstream HTTP, MIME and TLS security fixes. Existing data, profiles, authentication and configuration remain unchanged.
 
 ### Changed
+- Add disposable real-engine CI scenarios for base Factorio and Space Age on combined/split storage: world creation, save/mod ZIP uploads, startup settings, checkpoints and container restart/recreation with persistent-state checks.
 - Load management pages on demand with content-hashed route assets. Keep navigation and process controls available when a page fails to load, with an explicit reload action instead of an automatic reload.
 - Add a synthetic browser regression matrix for Chromium, Firefox, WebKit and mobile layouts, covering every route, permissions, disabled operations, error recovery, keyboard use and lazy asset loading.
 - Refresh the pinned Node 24 and Ubuntu 24.04 images and GitHub artifact upload/download actions without changing their major versions.
@@ -19,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Require an explicit disposable-target opt-in for the live world smoke test and clean up only saves it successfully created, using the current POST/DELETE API methods.
 
 ### Fixed
+- Release a queued stop after failed startup, leave an already-stopped runtime unlocked, and wait for pending startup during manager shutdown.
+- Keep keyboard focus inside mobile navigation, close the profile picker before its parent drawer, and keep mobile help text within the viewport.
 - Ignore obsolete WebSocket callbacks after reconnect/logout and handle failed sends without replaying console commands.
 - Prevent delayed profile-list responses from reverting a completed profile change or replacing newer loading/error state.
 - Match save-upload controls to the existing stopped-server API guard instead of offering uploads that the server rejects.

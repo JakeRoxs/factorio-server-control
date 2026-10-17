@@ -41,11 +41,12 @@ On Windows, use `python` if `python3` is unavailable. `-short` avoids credential
 
 Run a single UI file with `node --test ui/tests/profileContext.test.cjs`; run a Go subset from `src/` with `go test ./api -short -run TestDirectoryZip -count=1`. To inspect coverage, use `go test ./... -short -count=1 -coverprofile=../build/coverage.out` and `go tool cover -html=../build/coverage.out` after creating the ignored `build/` directory. Quote those complete flag arguments in PowerShell.
 
-Concurrency changes also require race checks on a supported C toolchain. CI runs Linux race checks for additive mod packs, optional-dependency preferences, file locks and the WebSocket hub. For a local lock/hub change:
+Concurrency changes also require race checks on a supported C toolchain. CI runs Linux race checks for additive mod packs, optional-dependency preferences, file locks, the WebSocket hub and startup/shutdown reservations. For a local lifecycle or lock/hub change:
 
 ```sh
 cd src
 go test ./lockfile ./api/websocket -race -short -count=1
+go test . ./factorio -race -short -run 'Test(Shutdown|StopAlreadyStopped|FailedStartup|InvalidStartupSettings|ParallelStart)' -count=1
 ```
 
 ## Isolated native development
@@ -66,14 +67,30 @@ Use `npm run watch` while editing, or rebuild once and reload the browser. The U
 | Browser matrix | Every route, lazy assets, keyboard, mobile layout, permissions and failure recovery in Chromium/Firefox/WebKit | Real game state; the loopback API fixture is synthetic |
 | Short Go suite | Parsers, authorization, transactions, rollback fixtures, settings and handler contracts | Every combination of real third-party mods |
 | Race tests | Concurrent code exercised by those tests | Freedom from all possible races |
-| Docker CI | Linux image build, mount-safe replacements, persistence guard and split layout | A live game session or full backup disaster recovery |
+| Docker CI | Production image, mounted-directory transactions, persistence guard, real-engine creation/import/checkpoints and restart/recreation on combined and split mounts | Credentialed Mod Portal downloads, arbitrary mods, all game releases or full backup disaster recovery |
 | Live world smoke | Real previews, world creation, start/stop and checkpoint round trip | Production load, all Factorio releases or large modded saves |
 
 Add a regression that fails before every bug fix. Use temporary directories and explicit dependency boundaries. Keep the shared client/provider behavior in the test rather than duplicating it in a test-only implementation. Browser smoke tests should cover admin and viewer permissions, stopped/running/unknown state, keyboard navigation, failed requests, profile switching and narrow layouts.
 
 ### Browser regression matrix
 
-After `npm ci` and `npm run build`, run `npx playwright install --with-deps chromium firefox webkit` and `npm run test:browser`. The suite owns a loopback fixture on port 18089 and refuses to reuse an existing listener. It never opens a real manager or reads local saves. The five projects cover desktop Chromium, Firefox and WebKit, plus mobile Chromium/WebKit viewports. Native file dialogs and physical mobile devices are outside that matrix. Test traces and screenshots stay in ignored `test-results/`.
+After `npm ci` and `npm run build`, run `npx playwright install --with-deps chromium firefox webkit` and `npm run test:browser`. The suite owns a loopback fixture on port 18089 and refuses to reuse an existing listener. It never opens a real manager or reads local saves. The five projects cover desktop Chromium, Firefox and WebKit, plus mobile Chromium/WebKit viewports. External asset requests fail the tests. Native file dialogs and physical mobile devices are outside that matrix. Test traces and screenshots stay in ignored `test-results/`; CI retains only synthetic failure diagnostics for seven days.
+
+### Disposable real-engine container matrix
+
+The Docker CI job runs `scripts/test-container-lifecycle.py` twice: Factorio 2.0.77/base with a combined mount, and 2.1.20/Space Age with split Unraid mounts. These are representative pinned scenarios, not a claim to cover every cross-product of versions, modes and mods. The script requires Python's standard library, Docker and official Factorio download access. To reproduce:
+
+```sh
+docker build -f docker/Dockerfile.registry -t factorio-server-manager:ci .
+python3 scripts/test-container-lifecycle.py --disposable --version 2.0.77 --mode factorio --layout combined
+python3 scripts/test-container-lifecycle.py --disposable --version 2.1.20 --mode space-age --layout split
+```
+
+It creates uniquely labelled containers and named volumes, publishes only the manager HTTP port on loopback, and creates a small world and an original two-file fixture mod. It checks engine-evaluated startup settings, byte-preserving save uploads, locked running operations, live RCON/checkpoints and checkpoint restore. Restart and recreation must retain the administrator credential, active profile, selected save, exact installed engine, game mode, autostart, fixture mod/settings and fixed checkpoints—even if the first-install channel environment changes.
+
+No existing endpoint, volume, host directory, user save or account can be passed to this runner. It reads its generated administrator credential only into memory, does not publish game ports, and never prints credentials or raw container logs. Cleanup verifies both ownership labels and generated names before removing its containers/volumes. An uncleanly killed runner may leave labelled test resources; inspect their names and labels before manually removing them. Never use broad Docker prune commands to clean a test run.
+
+The successful *Import mods from save* download flow needs Mod Portal authentication. Credential-free CI tests its rejection and proves that the old mods, game mode and save remain intact; staged discovery/activation and rollback have separate Go fixture tests. A successful authenticated third-party download remains an explicit manual test with a disposable account-backed installation, not a secret embedded in CI.
 
 ### Optional live world test
 
