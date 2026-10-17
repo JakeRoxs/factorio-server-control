@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -196,26 +194,37 @@ func (s *Save) Remove() error {
 	return os.Remove(filepath.Join(config.FactorioSavesDir, s.Name))
 }
 
-// Create savefiles for Factorio
+// CreateSave retains the legacy entry point but shares the guarded, staged
+// world-generation pipeline instead of launching an uncoordinated child process.
 func CreateSave(filePath string) (string, error) {
-	err := os.MkdirAll(filepath.Dir(filePath), 0755)
-	if err != nil {
-		log.Printf("Error in creating Factorio save: %s", err)
-		return "", err
-	}
-
-	args := []string{"--create", filePath}
 	config := bootstrap.GetConfig()
-	cmdOutput, err := exec.Command(config.FactorioBinary, args...).Output()
+	directory, err := filepath.Abs(config.FactorioSavesDir)
 	if err != nil {
-		log.Printf("Error in creating Factorio save: %s", err)
-		log.Println(string(cmdOutput))
 		return "", err
 	}
-
-	result := string(cmdOutput)
-
-	return result, nil
+	destination, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Dir(destination) != directory {
+		return "", errors.New("save destination must be inside the active saves directory")
+	}
+	if err := ValidatePathElement(filepath.Base(destination)); err != nil {
+		return "", err
+	}
+	if GetFactorioServer().IsBusy() {
+		return "", ErrFactorioMustBeStopped
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return "", ErrSaveAlreadyExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	save, err := CreateWorld(WorldGenerationRequest{Name: filepath.Base(destination), Preset: "default"})
+	if err != nil {
+		return "", err
+	}
+	return save.Name, nil
 }
 
 func GetLatestSave() (save Save, err error) {

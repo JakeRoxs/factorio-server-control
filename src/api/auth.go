@@ -371,17 +371,6 @@ func (a *Auth) addUser(user User) error {
 	return nil
 }
 
-func (a *Auth) addUserWithHash(user User) error {
-	// add user to db
-	result := a.db.Create(&user)
-	if result.Error != nil {
-		log.Printf("Error creating user in database: %s", result.Error)
-		return result.Error
-	}
-
-	return nil
-}
-
 func (a *Auth) changePassword(username, password string) error {
 	if err := validateUserPassword(password); err != nil {
 		return err
@@ -411,8 +400,10 @@ func (a *Auth) changePassword(username, password string) error {
 }
 
 func validateUserPassword(password string) error {
-	if len(password) < 10 || len(password) > 1024 {
-		return fmt.Errorf("%w: password must contain between 10 and 1024 bytes", ErrInvalidUser)
+	// bcrypt rejects inputs above 72 bytes. Validate before hashing so clients
+	// receive a correctable 400 rather than an unexpected server error.
+	if len(password) < 10 || len(password) > 72 {
+		return fmt.Errorf("%w: password must contain between 10 and 72 UTF-8 bytes", ErrInvalidUser)
 	}
 	return nil
 }

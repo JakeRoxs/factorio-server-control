@@ -328,7 +328,7 @@ func CreateSaveHandler(w http.ResponseWriter, r *http.Request) {
 	saveName := vars["save"]
 
 	if saveName == "" {
-		resp = fmt.Sprintf("Error creating save, no save name provided: %s", err)
+		resp = "Error creating save: no save name provided"
 		log.Println(resp)
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -343,15 +343,21 @@ func CreateSaveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	config := bootstrap.GetConfig()
 	saveFile := filepath.Join(config.FactorioSavesDir, saveName)
-	cmdOut, err := factorio.CreateSave(saveFile)
+	_, err = factorio.CreateSave(saveFile)
 	if err != nil {
 		resp = fmt.Sprintf("Error creating save {%s}: %s", saveName, err)
 		log.Println(resp)
-		w.WriteHeader(http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, factorio.ErrSaveAlreadyExists) || errors.Is(err, factorio.ErrWorldGenerationBusy) {
+			status = http.StatusConflict
+		} else if errors.Is(err, factorio.ErrFactorioMustBeStopped) {
+			status = http.StatusLocked
+		}
+		w.WriteHeader(status)
 		return
 	}
 
-	resp = fmt.Sprintf("Save %s created successfully. Command output: \n%s", saveName, cmdOut)
+	resp = fmt.Sprintf("Save %s created successfully.", saveName)
 }
 
 // LogTail returns last lines of the factorio-current.log file

@@ -43,13 +43,15 @@ func (v Version) MarshalText() (text []byte, err error) {
 // UnmarshalText implements encoding.TextUnmarshaller for Version
 func (v *Version) UnmarshalText(text []byte) error {
 	parts := strings.SplitN(string(text), ".", 4)
+	var parsed Version
 	for i, part := range parts {
 		p, err := strconv.ParseUint(part, 10, 32)
 		if err != nil {
 			return err
 		}
-		v[i] = uint(p)
+		parsed[i] = uint(p)
 	}
+	*v = parsed
 	return nil
 }
 

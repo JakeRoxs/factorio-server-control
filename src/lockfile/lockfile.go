@@ -31,7 +31,7 @@ func NewLock() *FileLock {
 
 func makeAbsolutePath(target string) string {
 	if filepath.IsAbs(target) {
-		return target
+		return filepath.Clean(target)
 	}
 
 	wd, err := os.Getwd()
@@ -67,8 +67,7 @@ func (fl *FileLock) Unlock(filePath string) error {
 
 	lock := fl.Locks[filePath]
 	if lock.Read == 0 && lock.Write == 1 {
-		lock.Write = 0
-		fl.Locks[filePath] = lock
+		delete(fl.Locks, filePath)
 	} else {
 		return ErrorAlreadyLocked
 	}
@@ -100,7 +99,11 @@ func (fl *FileLock) RUnlock(filePath string) error {
 	lock := fl.Locks[filePath]
 	if lock.Read > 0 && lock.Write == 0 {
 		lock.Read--
-		fl.Locks[filePath] = lock
+		if lock.Read == 0 {
+			delete(fl.Locks, filePath)
+		} else {
+			fl.Locks[filePath] = lock
+		}
 	} else {
 		return ErrorAlreadyLocked
 	}

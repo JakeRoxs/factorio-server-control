@@ -50,6 +50,7 @@ jobs:
           go version | grep -F 'go1.26.9 '
           go test ./... -short -count=1
           go test ./factorio ./api -race -short -run 'Test(ModPackMerge|MergeModPack|ModPortalPreferences|ModPortalOptionalDefaults)' -count=1
+          go test ./lockfile ./api/websocket -race -short -count=1
           go vet ./...
           go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - if: contains(matrix.os, 'windows')
