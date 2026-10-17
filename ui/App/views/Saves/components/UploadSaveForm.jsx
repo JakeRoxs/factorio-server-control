@@ -7,13 +7,14 @@ import Button from "../../../components/Button";
 import Error from "../../../components/Error";
 import Label from "../../../components/Label";
 
-const UploadSaveForm = ({onSuccess}) => {
+const UploadSaveForm = ({onSuccess, disabled = false}) => {
     const {register, handleSubmit, reset, formState: {errors}} = useForm();
     const [fileName, setFileName] = useState("Choose a Factorio save…");
     const [isUploading, setIsUploading] = useState(false);
     const savefileRegistration = register("savefile", {required: true});
 
     const onSubmit = async data => {
+        if (disabled || isUploading) return;
         setIsUploading(true);
         try {
             await saves.upload(data.savefile[0]);
@@ -31,7 +32,7 @@ const UploadSaveForm = ({onSuccess}) => {
     return <form onSubmit={handleSubmit(onSubmit)}>
         <div className="mb-4">
             <Label text="Save archive" htmlFor="upload-savefile"/>
-            <label className="ui-file-input px-4" htmlFor="upload-savefile">
+            <label className={`ui-file-input px-4${disabled ? " opacity-50" : ""}`} htmlFor="upload-savefile">
                 <FontAwesomeIcon className="text-orange" icon={faCloudArrowUp}/>
                 <span className="truncate">{fileName}</span>
                 <input
@@ -44,11 +45,12 @@ const UploadSaveForm = ({onSuccess}) => {
                     }}
                     accept=".zip,application/zip"
                     type="file"
+                    disabled={disabled || isUploading}
                 />
             </label>
             <Error error={errors.savefile} message="Choose a .zip save file."/>
         </div>
-        <Button type="success" isLoading={isUploading} isSubmit><FontAwesomeIcon icon={faCloudArrowUp}/> Upload save</Button>
+        <Button type="success" isLoading={isUploading} isDisabled={disabled} isSubmit><FontAwesomeIcon icon={faCloudArrowUp}/> Upload save</Button>
     </form>;
 };
 

@@ -10,6 +10,7 @@ const client = Axios.create({
 });
 
 client.interceptors.response.use(res => res, err => {
+    if (err.code === "ERR_CANCELED") return Promise.reject(err);
     const status = err.response?.status;
     if (!err.response) {
         const message = err.config?.networkErrorMessage || "The control service is not reachable. Check the connection.";
@@ -20,9 +21,10 @@ client.interceptors.response.use(res => res, err => {
     } else if(status === 502) {
         window.flash("Service not available", "red");
     } else {
-        const message = typeof err.response.data === "string"
+        const value = typeof err.response.data === "string"
             ? err.response.data
-            : err.response.data?.error || err.response.data?.message || "The request could not be completed.";
+            : err.response.data?.error || err.response.data?.message;
+        const message = typeof value === "string" && value.trim() ? value : "The request could not be completed.";
         window.flash(message, "red");
     }
     return Promise.reject(err);

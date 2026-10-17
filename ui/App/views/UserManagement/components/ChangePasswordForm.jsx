@@ -7,6 +7,7 @@ import Button from "../../../components/Button";
 import Label from "../../../components/Label";
 import InputPassword from "../../../components/InputPassword";
 import Error from "../../../components/Error";
+import {isValidPassword, passwordRequirement} from "../../../components/passwordRules.cjs";
 
 const ChangePasswordForm = () => {
     const {register, handleSubmit, reset, formState: {errors}, watch} = useForm();
@@ -28,7 +29,7 @@ const ChangePasswordForm = () => {
 
     return <form onSubmit={handleSubmit(onSubmit)}>
         <div className="mb-4"><Label htmlFor="old_password" text="Current password"/><InputPassword register={register("old_password", {required: true})}/><Error error={errors.old_password} message="Current password is required."/></div>
-        <div className="mb-4"><Label htmlFor="new_password" text="New password"/><InputPassword register={register("new_password", {required: true, minLength: 10})}/><Error error={errors.new_password} message="Use at least 10 characters."/></div>
+        <div className="mb-4"><Label htmlFor="new_password" text="New password"/><InputPassword register={register("new_password", {required: true, validate: isValidPassword})}/><Error error={errors.new_password} message={passwordRequirement}/></div>
         <div className="mb-4"><Label htmlFor="new_password_confirmation" text="Confirm new password"/><InputPassword register={register("new_password_confirmation", {required: true, validate: value => value === newPassword})}/><Error error={errors.new_password_confirmation} message="Passwords must match."/></div>
         <Button isSubmit isLoading={isSaving} type="success"><FontAwesomeIcon icon={faKey}/> Change password</Button>
     </form>;

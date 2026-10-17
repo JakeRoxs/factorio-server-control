@@ -44,3 +44,20 @@ test("normal network, size-limit and authentication handling remains unchanged",
     assert.deepEqual(client.flashes, []);
     assert.deepEqual(client.events, ["fsm:authentication-required"]);
 });
+
+test("cancelled requests do not report the control service as offline", async () => {
+    const client = loadClient();
+    const error = {code: "ERR_CANCELED"};
+    await assert.rejects(client.reject(error), value => value === error);
+    assert.deepEqual(client.flashes, []);
+    assert.deepEqual(client.events, []);
+});
+
+test("unexpected structured API errors never reach React as objects", async () => {
+    for (const data of [{error: {details: "internal"}}, {message: ["invalid"]}, null]) {
+        const client = loadClient();
+        const error = {response: {status: 500, data}};
+        await assert.rejects(client.reject(error), value => value === error);
+        assert.deepEqual(client.flashes, ["The request could not be completed."]);
+    }
+});

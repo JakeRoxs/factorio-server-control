@@ -9,6 +9,7 @@ import Input from "../../../components/Input";
 import InputPassword from "../../../components/InputPassword";
 import Error from "../../../components/Error";
 import Select from "../../../components/Select";
+import {isValidPassword, passwordRequirement} from "../../../components/passwordRules.cjs";
 
 const CreateUserForm = ({updateUserList}) => {
     const [isSaving, setIsSaving] = useState(false);
@@ -37,7 +38,7 @@ const CreateUserForm = ({updateUserList}) => {
             <div><Label htmlFor="role" text="Role"/><Select register={register("role", {required: true})} options={[{value: "viewer", name: "Viewer (read-only)"}, {value: "admin", name: "Administrator"}]}/></div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div><Label htmlFor="password" text="Password"/><InputPassword register={register("password", {required: true, minLength: 10})}/><Error error={errors.password} message="Use at least 10 characters."/></div>
+            <div><Label htmlFor="password" text="Password"/><InputPassword register={register("password", {required: true, validate: isValidPassword})}/><Error error={errors.password} message={passwordRequirement}/></div>
             <div><Label htmlFor="password_confirmation" text="Confirm password"/><InputPassword register={register("password_confirmation", {required: true, validate: value => value === password})}/><Error error={errors.password_confirmation} message="Passwords must match."/></div>
         </div>
         <Button isSubmit isLoading={isSaving} type="success"><FontAwesomeIcon icon={faUserPlus}/> Create {role === "admin" ? "administrator" : "viewer"}</Button>
