@@ -9,7 +9,11 @@ const errorText = error => {
 };
 
 const validateState = result => {
-    if (!result || !Array.isArray(result.profiles) || !result.active_profile_id) {
+    const profiles = result?.profiles;
+    if (!Array.isArray(profiles) || typeof result.active_profile_id !== "string" ||
+        !profiles.every(profile => typeof profile?.id === "string" && profile.id.length > 0) ||
+        new Set(profiles.map(profile => profile.id)).size !== profiles.length ||
+        !profiles.some(profile => profile.id === result.active_profile_id)) {
         throw new Error("The profile API returned an invalid response.");
     }
     return result;
@@ -20,29 +24,51 @@ export const ProfileProvider = ({children}) => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState("");
     const hasLoaded = useRef(false);
+    const generation = useRef(0);
+    const mounted = useRef(true);
 
     const applyProfileState = useCallback(result => {
         const validated = validateState(result);
-        setState(validated);
-        setError("");
+        // Explicit mutations supersede any older in-flight list response.
+        generation.current += 1;
+        if (mounted.current) {
+            setState(validated);
+            setError("");
+            hasLoaded.current = true;
+            setIsLoading(false);
+        }
         return validated;
     }, []);
 
     const refreshProfiles = useCallback(async () => {
+        const requestGeneration = ++generation.current;
+        const isCurrent = () => mounted.current && requestGeneration === generation.current;
         if (!hasLoaded.current) setIsLoading(true);
         try {
-            return applyProfileState(await profilesResource.list());
+            const result = validateState(await profilesResource.list());
+            if (isCurrent()) {
+                setState(result);
+                setError("");
+            }
+            return result;
         } catch (requestError) {
-            setError(errorText(requestError));
+            if (isCurrent()) setError(errorText(requestError));
             throw requestError;
         } finally {
-            hasLoaded.current = true;
-            setIsLoading(false);
+            if (isCurrent()) {
+                hasLoaded.current = true;
+                setIsLoading(false);
+            }
         }
-    }, [applyProfileState]);
+    }, []);
 
     useEffect(() => {
+        mounted.current = true;
         refreshProfiles().catch(() => undefined);
+        return () => {
+            mounted.current = false;
+            generation.current += 1;
+        };
     }, [refreshProfiles]);
 
     const activeProfile = useMemo(

@@ -1,4 +1,5 @@
 node_modules/
+/app/
 dev/
 dev_packs/
 factorio-server-manager*
@@ -16,14 +17,6 @@ __pycache__/
 factorio.auth
 /pkg/
 mix-manifest.json
-/app/**/vendor/
-/app/*.js*
-/app/*.css*
-/app/images/
-/app/fonts/
-/app/favicon.ico
-/app/favicon-*.png
-/app/apple-touch-icon.png
 .vscode
 .env
 .env.*

@@ -100,7 +100,6 @@ func NewRouter() *mux.Router {
 	serverOffRouter := apiRouter.NewRoute().Subrouter()
 	serverOffRouter.Use(ServerOffMiddleware)
 
-	apiRouter.NewRoute().Subrouter()
 	for _, route := range apiRoutes {
 		var router *mux.Router
 		if route.ServerOff {

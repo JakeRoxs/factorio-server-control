@@ -96,8 +96,10 @@ const Saves = ({serverStatus, canManage = false}) => {
 
         {!canManage && <Alert type="info" className="mb-5">Viewer access is read-only. Save downloads and checkpoint downloads remain available.</Alert>}
 
-        {canManage && serverStatus?.running && <Alert type="info" className="mb-5">
-            Uploads and downloads stay available while Factorio is running. Creating or deleting worlds unlocks after the server stops.
+        {canManage && mutationsLocked && <Alert type="info" className="mb-5">
+            {serverStatus?.known === false
+                ? "Wait for a confirmed stopped status before uploading, creating or deleting saves."
+                : "Stop Factorio before uploading, creating or deleting saves."} Downloads remain available.
         </Alert>}
 
         {isLoading && <Panel className="mb-5" content={<div className="ui-empty-state"><div><FontAwesomeIcon className="text-orange" icon={faHardDrive} spin/><p className="mt-3">Loading profile saves…</p></div></div>}/>}
@@ -118,7 +120,7 @@ const Saves = ({serverStatus, canManage = false}) => {
             <Panel
                 className="mb-5"
                 title="Upload existing save"
-                content={<UploadSaveForm onSuccess={updateList}/>}
+                content={<UploadSaveForm onSuccess={updateList} disabled={mutationsLocked}/>}
             /></> : <Panel
                 className="mb-5"
                 headerAction={<ScopeBadge/>}
@@ -138,7 +140,7 @@ const Saves = ({serverStatus, canManage = false}) => {
             {canManage && <Panel
                 className="mb-5"
                 title="Upload save"
-                content={<UploadSaveForm onSuccess={updateList}/>}
+                content={<UploadSaveForm onSuccess={updateList} disabled={mutationsLocked}/>}
             />}
         </>}
 

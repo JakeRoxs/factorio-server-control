@@ -1,21 +1,28 @@
 #!/bin/sh
 
 set -eu
+umask 077
+
+if [ "${FSM_SMOKE_DISPOSABLE:-}" != "1" ]; then
+    echo "This test changes game state. Use a disposable manager and set FSM_SMOKE_DISPOSABLE=1." >&2
+    exit 1
+fi
 
 base_url=${FSM_BASE_URL:-http://127.0.0.1}
 credential_file=${FSM_CREDENTIAL_FILE:-/opt/fsm-data/initial-admin-password.txt}
-test_save=${FSM_TEST_SAVE:-fsm-new-world-smoke.zip}
+test_save=${FSM_TEST_SAVE:-fsm-new-world-smoke-$(date +%s)-$$.zip}
 test_game_mode=${FSM_TEST_GAME_MODE:-}
 
 work_dir=$(mktemp -d)
 cookie_file="$work_dir/cookies.txt"
 server_started=false
+save_created=false
 checkpoint_id=
 restored_save=
 
 cleanup() {
     if [ "$server_started" = true ]; then
-        curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/server/stop" >/dev/null 2>&1 || true
+        curl --fail --silent --show-error --request POST --cookie "$cookie_file" "$base_url/api/server/stop" >/dev/null 2>&1 || true
         attempt=0
         while [ "$attempt" -lt 30 ]; do
             running=$(curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/server/status" 2>/dev/null | jq -r '.running // false') || running=true
@@ -25,12 +32,14 @@ cleanup() {
         done
     fi
     if [ -n "$restored_save" ]; then
-        curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/saves/rm/$restored_save" >/dev/null 2>&1 || true
+        curl --fail --silent --show-error --request DELETE --cookie "$cookie_file" "$base_url/api/saves/rm/$restored_save" >/dev/null 2>&1 || true
     fi
     if [ -n "$checkpoint_id" ]; then
         curl --fail --silent --show-error --request DELETE --cookie "$cookie_file" "$base_url/api/checkpoints/$checkpoint_id" >/dev/null 2>&1 || true
     fi
-    curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/saves/rm/$test_save" >/dev/null 2>&1 || true
+    if [ "$save_created" = true ]; then
+        curl --fail --silent --show-error --request DELETE --cookie "$cookie_file" "$base_url/api/saves/rm/$test_save" >/dev/null 2>&1 || true
+    fi
     rm -rf "$work_dir"
 }
 trap cleanup EXIT INT TERM
@@ -132,6 +141,7 @@ created_name=$(jq -r '.name' "$work_dir/create.json")
     exit 1
 }
 echo "created=$created_name"
+save_created=true
 
 start_payload=$(jq -cn --arg save "$test_save" '{bindip:"0.0.0.0",port:34197,savefile:$save}')
 printf '%s' "$start_payload" | curl --fail --silent --show-error \
@@ -164,7 +174,7 @@ checkpoint_signature=$(od -An -tx1 -N4 "$work_dir/checkpoint.zip" | tr -d ' \n')
 }
 echo "checkpoint=$checkpoint_id"
 
-curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/server/stop" >/dev/null
+curl --fail --silent --show-error --request POST --cookie "$cookie_file" "$base_url/api/server/stop" >/dev/null
 attempt=0
 while [ "$attempt" -lt 30 ]; do
     running=$(curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/server/status" | jq -r '.running')
@@ -194,10 +204,11 @@ checkpoint_count=$(curl --fail --silent --show-error --cookie "$cookie_file" "$b
 }
 echo "restore=$restored_save"
 
-curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/saves/rm/$restored_save" >/dev/null
+curl --fail --silent --show-error --request DELETE --cookie "$cookie_file" "$base_url/api/saves/rm/$restored_save" >/dev/null
 restored_save=
 curl --fail --silent --show-error --request DELETE --cookie "$cookie_file" "$base_url/api/checkpoints/$checkpoint_id" >/dev/null
 checkpoint_id=
 
-curl --fail --silent --show-error --cookie "$cookie_file" "$base_url/api/saves/rm/$test_save" >/dev/null
+curl --fail --silent --show-error --request DELETE --cookie "$cookie_file" "$base_url/api/saves/rm/$test_save" >/dev/null
+save_created=false
 echo "cleanup=ok"

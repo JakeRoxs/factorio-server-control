@@ -44,7 +44,12 @@ func serveDirectoryZip(w http.ResponseWriter, directory, downloadName string, lo
 		if err != nil {
 			return err
 		}
-		writer, createErr := zipWriter.Create(info.Name())
+		relativePath, err := filepath.Rel(directory, path)
+		if err != nil {
+			_ = file.Close()
+			return err
+		}
+		writer, createErr := zipWriter.Create(filepath.ToSlash(relativePath))
 		if createErr != nil {
 			_ = file.Close()
 			return createErr

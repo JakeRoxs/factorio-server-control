@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const webpack = require('webpack');
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+const CssMinimizerPlugin = require("css-minimizer-webpack-plugin");
 const TerserPlugin = require('terser-webpack-plugin');
 const packageMetadata = require('./package.json');
 
@@ -178,11 +179,7 @@ module.exports = (env, argv) => {
         optimization: {
             minimize: isProduction,
             minimizer: [
-                new MiniCssExtractPlugin(
-                    {
-                        filename: "[name].css"
-                    }
-                ),
+                new CssMinimizerPlugin(),
                 new TerserPlugin()
             ],
         }
