@@ -1,0 +1,70 @@
+# Project quality review — 2026-10-17
+
+This review started from `main` at `d74221f`, with application version 0.20.0. It covers runtime boundaries, HTTP handlers, authentication, profile/UI state, archives, locking, dependencies, build configuration, tests and documentation. It does not publish a release, change deployed installations or certify that every possible workflow is defect-free.
+
+The main weaknesses found were inconsistent behavior between old and new code paths, asynchronous UI state ownership, and gaps in regression coverage. The fixes preserve the one-server model, existing profiles, saved game versions, credentials, storage paths and mount layouts.
+
+## Findings and corrections
+
+| Area | Finding | Correction and regression coverage |
+| --- | --- | --- |
+| Connection lifecycle | A callback from an obsolete WebSocket could close or replace a newer connection; late messages could arrive after logout. A send failure could escape to the caller. | Bind callbacks to their connection, detach them on logout, cancel stale reconnect timers and report failed sends without replaying commands. `ui/tests/socket.test.cjs` exercises these sequences. |
+| Profile state | An older list response could revert a completed profile mutation or replace the newest loading/error state. | Generation-based response ownership and profile-manifest validation in the actual React provider. Deferred-response tests cover mutation races, invalid responses, failures and retry. |
+| Save uploads | The UI offered uploads while Factorio was running, although the API requires a stopped server. | Disable the visible file picker and submit control when locked, and guard submission itself. The form regression and browser checks cover the restriction. |
+| New passwords | Validation accepted passwords longer than bcrypt's 72-byte limit, turning invalid input into a hashing failure. | Match API and UI validation to 10–72 UTF-8 bytes. Test ASCII/multibyte boundaries and retention of the original hash/login after a rejected change. Existing hashes are unchanged. |
+| Directory downloads | ZIP creation flattened subdirectories, producing duplicate names for different nested files. | Preserve relative forward-slash paths. Tests inspect archive entries and bytes, failure response behavior, locks and symlink rejection. |
+| File locks | Equivalent absolute paths containing `..` used different lock keys. Released files remained in the map indefinitely. | Clean path keys and remove idle entries after the last unlock. Add reader/writer, alias and concurrent-reader tests, plus Linux race checks in CI. This is process-local coordination, not a cross-process filesystem lock. |
+| Legacy save creation | The old create-save helper launched a separate unguarded engine command outside the new world-generation pipeline. | Keep the legacy endpoint but use the shared staged generator, reject existing destinations, enforce stopped state and omit raw child output from success responses. Regression tests prove existing bytes survive and direct calls cannot bypass the running-state guard. |
+| Version parser | Reusing a version value retained omitted components; invalid input could partially mutate the receiver. | Parse into a new value and commit only on success. Repeated/invalid-input tests cover the contract without removing accepted short version forms. |
+| API error reporting | Cancelled requests could report the manager as offline; nested error objects could reach notification handling. | Keep cancellation quiet and normalize error text. Client tests retain the existing authentication, size-limit and backup-error behavior. |
+| CSS production build | A second extraction plugin occupied the CSS minimizer slot. | Use the already-installed CSS minimizer beside Terser and test development/production configurations. The production build succeeds. |
+| Manual live smoke test | Save removal and server stop used obsolete GET methods; cleanup did not distinguish an existing save from one created by the test. | Use DELETE/POST, require `FSM_SMOKE_DISPOSABLE=1`, and track successfully created test saves before cleanup. Static script checks cover methods and the opt-in. The live script was not executed against a game in this review. |
+
+Each bug fix was preceded by a failing regression where the behavior is covered by the new automated tests. Additional request-decoding tests cover world-generation unknown fields, malformed/trailing JSON, numeric input, request bounds and wrapped conflict/locked error mapping.
+
+## Cleanup decisions
+
+- Remove unused direct dependencies: `classnames`, `locks`, `prop-types`, `react-native-listener`, `style-loader` and `webpack-fix-style-only-entries`. Keep required transitive dependencies in the lockfile.
+- Declare `events` directly because the browser code imports it; do not depend on Webpack to supply it accidentally.
+- Classify Tailwind as a build dependency and add the matching React 18 test renderer as a test dependency. This classification does **not** resolve its security advisory.
+- Remove the unused authentication helper and empty router declaration; preserve public routes and their method/role/stopped-state guards.
+- Stop tracking the stale generated `app/index.html`. The complete `app/` directory is rebuilt from `ui/` and ignored, matching existing container/release builds and repository policy.
+- Document operations, recovery, local isolation and test boundaries in [OPERATIONS.md](OPERATIONS.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and [TECHNICAL-NOTES.md](../TECHNICAL-NOTES.md). Correct the earlier claim that ordinary CI runs a live RCON/checkpoint scenario.
+
+No business feature was removed just to shorten the code, and no cosmetic rewrite of working backend modules was made.
+
+## Feature consistency
+
+| Feature group | Assessment |
+| --- | --- |
+| Profiles and process controls | One active playable server with stopped profile switching remains coherent. The profile library is not a set of concurrent servers. Preserve this boundary in both UI and documentation. |
+| Saves, new worlds and checkpoints | Initial creation belongs to an empty profile; an established profile retains save upload/download and checkpoints. Autosaves rotate, checkpoints retain snapshots, and profile exports transfer setups. These are distinct functions, not redundant buttons to remove. |
+| Versions, game mode and mods | Exact engine version, release target and built-in expansion state are separate choices. Required dependencies, optional defaults, startup settings, pack addition and full replacement have different effects; retain explicit reviews and confirmations. |
+| Backups and persistence | Portable profile/mod archives are not a substitute for a consistent backup of manager storage plus all selected game-data mounts. Mount-safe entry replacement and existing rollback tests remain required. |
+| Factory map and player data | The map is a periodic isolated chart snapshot, not graphical live streaming. Player-time snapshot metadata is not a live productivity score. Keep scheduling, manual-only/disabled mode and resource limits explicit. |
+| Permissions | Viewers can read and download permitted content but cannot operate the game. They are not anonymous public spectators; downloaded saves can contain private player data. Backend enforcement remains authoritative. |
+
+The existing saves screenshot depicts a stopped server and remains representative: uploads stay available in that state. No layout, menu or branding redesign was introduced by this review.
+
+## Verification performed locally
+
+Windows, Node.js 24.19.0 and the required Go 1.26.9 toolchain:
+
+- Clean `npm ci`, **47 passing Node/UI tests**, and a successful production Webpack build.
+- `go test ./... -short -count=1` and `go vet ./...` pass. The short suite reports **49.7% aggregate Go statement coverage**; this is a measurement of the exercised Windows paths, not a completeness claim.
+- Nine Python repository-validator tests and the Unraid metadata validator pass.
+- `govulncheck@v1.7.0` finds no reachable vulnerability and no finding in imported packages. It reports one advisory in an unused package of a required module; this is not equivalent to zero module-level advisories.
+- Browser checks of the production UI with a synthetic loopback-only API confirm running/stopped/unknown upload restrictions, viewer-only save downloads, disabled running-profile switching and Escape closing the profile chooser. No real server, savegame or credential was used.
+- `git diff --check` passes. No release version, image tag, deployment configuration, private save or credential was added.
+
+Pull requests must also pass the existing Linux/Windows CI matrix, production image build, mounted-directory/persistence checks and the added file-lock/WebSocket race checks before merging. Local synthetic browser checks do not replace those jobs or a live-engine test.
+
+## Open risks and next useful work
+
+1. **Unpatched build advisory:** `npm audit` reports five high-severity entries along one `braces` dependency chain. [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) has no patched release as of this review. It affects build-time brace expansion here, not runtime HTTP input. Do not treat moving Tailwind to dev dependencies as a fix. A separately tested Tailwind migration or an upstream patch remains necessary to remove the dependency.
+2. **End-to-end coverage:** automate a disposable real-engine matrix for creation, save/mod import, checkpoint restore and container restart. The optional world smoke script is not yet a CI substitute. Keep licensed engines, accounts and private saves outside published fixtures.
+3. **Browser coverage:** component tests now cover important races, but there is no automated browser matrix for every page, keyboard path, mobile layout and failed operation. This review's focused synthetic smoke test is narrower than that goal.
+4. **Coverage depth:** the current statement percentage leaves substantial unexercised startup, process-control and error branches. Add tests around observed risk instead of padding the percentage with assertions that repeat the implementation.
+5. **Frontend size:** the application still ships one main JavaScript bundle (about 817 KiB uncompressed in this build). Route-level code splitting could reduce first-load work; it needs independent navigation/cache/error testing, not removal of useful views.
+
+These are explicit follow-up boundaries, not silently completed work or a reason to call the software perfect.

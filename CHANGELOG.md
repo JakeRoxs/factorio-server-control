@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - Refresh the pinned Node 24 and Ubuntu 24.04 images and GitHub artifact upload/download actions without changing their major versions.
 - Add a regression check that keeps all Go build and CI versions aligned with the exact patch version in `src/go.mod`.
+- Remove unused frontend dependencies and an unused authentication helper/router, declare the browser event emitter directly, and classify Tailwind as build-only. Generated HTML now stays out of source control together with the other built UI assets.
+- Correct CSS minification, expand component/API/file-lock/build tests, and document development setup, permissions, recovery procedures and actual verification boundaries.
+- Require an explicit disposable-target opt-in for the live world smoke test and clean up only saves it successfully created, using the current POST/DELETE API methods.
+
+### Fixed
+- Ignore obsolete WebSocket callbacks after reconnect/logout and handle failed sends without replaying console commands.
+- Prevent delayed profile-list responses from reverting a completed profile change or replacing newer loading/error state.
+- Match save-upload controls to the existing stopped-server API guard instead of offering uploads that the server rejects.
+- Validate new manager passwords against bcrypt's 72-byte maximum in the API and UI, without changing existing hashes.
+- Preserve subdirectories in mod ZIP downloads instead of flattening duplicate filenames; release idle file-lock entries and normalize equivalent paths.
+- Route legacy save creation through the staged world generator, reject existing destinations and preserve stopped-server/process guards instead of launching an independent Factorio process.
+- Parse replacement version strings atomically, clear omitted components, and preserve the previous value when parsing fails.
+- Keep cancelled requests quiet and normalize unexpected structured API errors before displaying notifications.
 
 ## [0.20.0] - 2026-10-07
 
