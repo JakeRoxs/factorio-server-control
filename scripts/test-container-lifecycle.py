@@ -110,12 +110,13 @@ class DisposableManager:
             args += ["--mount", f"type=volume,source={name},target={target}"]
         self.docker(*args, self.image)
         self.require_owned("container", self.name)
-        address = self.docker("port", self.name, "80/tcp").decode().strip()
-        check(re.fullmatch(r"127\.0\.0\.1:[0-9]+", address), "Manager must bind only to loopback")
-        self.base = "http://" + address
         self.wait_http()
 
     def wait_http(self):
+        # Docker can reassign an ephemeral published port on restart.
+        address = self.docker("port", self.name, "80/tcp").decode().strip()
+        check(re.fullmatch(r"127\.0\.0\.1:[0-9]+", address), "Manager must bind only to loopback")
+        self.base = "http://" + address
         def ready():
             try:
                 with urllib.request.urlopen(self.base + "/", timeout=5) as response:
@@ -202,7 +203,7 @@ def run_scenario(manager, mode):
     manager.create_container(manager.version)
     credential = manager.login()
     api = manager.api
-    check(api("GET", "/server/facVersion")["version"] == manager.version, "Wrong initial engine version")
+    check(api("GET", "/server/facVersion")["version"] == manager.version + ".0", "Wrong initial engine version")
     api("PUT", "/map-snapshot/settings", {"enabled": False, "interval_minutes": 60})
     api("POST", "/server/game-mode", {"mode": mode})
     settings = api("GET", "/settings")
@@ -255,6 +256,7 @@ def run_scenario(manager, mode):
     print("Live checkpoint, restore, running-state guards and autostart setup: OK", flush=True)
 
     for operation in ("restart", "recreate"):
+        print(f"Checking container {operation}...", flush=True)
         if operation == "restart":
             manager.require_owned("container", manager.name)
             manager.docker("restart", "--time", "90", manager.name)
@@ -266,7 +268,7 @@ def run_scenario(manager, mode):
         manager.login(credential)
         manager.wait_game()
         check(api("GET", "/server/status")["savefile"] == restored, "Selected save changed")
-        check(api("GET", "/server/facVersion")["version"] == manager.version, "Persisted exact version changed")
+        check(api("GET", "/server/facVersion")["version"] == manager.version + ".0", "Persisted exact version changed")
         check(manager.active_profile()["id"] == profile_id, "Active profile changed")
         check(api("GET", "/server/game-mode")["mode"] == mode, "Game mode changed")
         check(api("GET", "/server/autostart")["enabled"], "Autostart preference changed")

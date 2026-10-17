@@ -155,6 +155,7 @@ test("a failed log request can be retried without reloading the application", as
 
 test("profile picker works from the keyboard and links to new profile setup", async ({page}) => {
     await page.goto("/");
+    await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
     const openNavigation = page.getByRole("button", {name: "Open navigation", exact: true});
     if (await openNavigation.isVisible()) await openNavigation.click();
     const picker = page.getByRole("button", {name: /Active profile Demo factory/});
