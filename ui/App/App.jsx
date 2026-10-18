@@ -21,6 +21,7 @@ const GameSettings = lazy(() => import(/* webpackChunkName: "game-settings" */ "
 const Console = lazy(() => import(/* webpackChunkName: "console" */ "./views/Console"));
 const Releases = lazy(() => import(/* webpackChunkName: "releases" */ "./views/Releases"));
 const Profiles = lazy(() => import(/* webpackChunkName: "profiles" */ "./views/Profiles"));
+const Servers = lazy(() => import(/* webpackChunkName: "servers" */ "./views/Servers"));
 
 const AppLoader = () => <div className="ui-login-shell">
     <div className="text-center">
@@ -95,6 +96,8 @@ const App = () => {
                 const parsedStatus = typeof status === "string" ? JSON.parse(status) : status;
                 setServerStatus(normalizeServerStatus(parsedStatus));
             } catch (error) {
+                // Non-critical: malformed status updates should not crash the UI.
+                console.error("Invalid server status update:", error);
                 window.flash("Received an invalid server status update.", "red");
             }
         };
@@ -141,6 +144,7 @@ const App = () => {
                     <Route path="logs" element={<Logs/>}/>
                     <Route path="releases" element={<Releases serverStatus={serverStatus} refreshServerStatus={refreshServerStatus} canManage={canManage}/>}/>
                     <Route path="profiles" element={<Profiles serverStatus={serverStatus} refreshServerStatus={refreshServerStatus} canManage={canManage}/>}/>
+                    <Route path="servers" element={<Servers canManage={canManage}/>}/>
                     <Route path="user-management" element={<UserManagement currentUser={currentUser} canManage={canManage}/>}/>
                 </Route>
             </Route>

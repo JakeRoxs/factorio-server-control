@@ -3,7 +3,7 @@
 ARG VERSION="dev"
 ARG VCS_REF="unknown"
 
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS frontend-build
+FROM --platform=$BUILDPLATFORM node@sha256:ec857ea6bb60cb3d0fa4d97495590c5fe7d51be8572c307b55957eeb06569cf7 AS frontend-build
 
 ARG VERSION
 ARG VCS_REF
@@ -43,7 +43,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 
 # glibc is required by the official Factorio headless server.
-FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS runtime
+# Runs as root intentionally: binds port 80 and manages /opt/factorio files.
+FROM ubuntu@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc AS runtime
 
 ARG VERSION
 ARG VCS_REF
@@ -55,7 +56,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends ca-certificates curl jq tar xz-utils \
+    && apt-get install -y --no-install-recommends ca-certificates curl jq tar xz-utils libmimalloc2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/fsm

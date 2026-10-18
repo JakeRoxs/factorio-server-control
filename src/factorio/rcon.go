@@ -56,7 +56,7 @@ func (server *Server) installStartupRCON(console *rcon.RemoteConsole) (pendingSt
 	return server.markStartupReady(), true
 }
 
-func (server *Server) runPersistentRCONCommand(command string) (string, error) {
+func (server *Server) RunPersistentRCONCommand(command string) (string, error) {
 	serverRCONCommandMutex.Lock()
 	defer serverRCONCommandMutex.Unlock()
 

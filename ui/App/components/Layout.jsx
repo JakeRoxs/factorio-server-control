@@ -4,7 +4,7 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
     faBars, faCheck, faChevronRight, faCloudArrowDown, faFileLines, faFloppyDisk,
     faGamepad, faGaugeHigh, faLayerGroup, faMugHot, faMusic, faPuzzlePiece,
-    faPlus, faRightFromBracket, faSliders, faTerminal, faUsers, faXmark
+    faPlus, faRightFromBracket, faServer, faSliders, faTerminal, faUsers, faXmark
 } from "@fortawesome/free-solid-svg-icons";
 import Button from "./Button";
 import ProfileContextBar from "./ProfileContextBar";
@@ -27,6 +27,7 @@ const profileLinks = [
 ];
 
 const managerLinks = [
+    ["Servers", "/servers", faServer],
     ["Profiles", "/profiles", faLayerGroup],
     ["Users & access", "/user-management", faUsers]
 ];
@@ -43,7 +44,7 @@ const mobileLinks = [
 ];
 
 const modeLabel = mode => mode === "space-age" ? "Space Age" : mode === "factorio" ? "Factorio" : "Custom";
-const isManagerPath = pathname => ["/profiles", "/user-management"].some(path => pathname === path || pathname.startsWith(path + "/"));
+const isManagerPath = pathname => ["/servers", "/profiles", "/user-management"].some(path => pathname === path || pathname.startsWith(path + "/"));
 
 const NavigationLink = ({item}) => {
     const [label, to, icon] = item;

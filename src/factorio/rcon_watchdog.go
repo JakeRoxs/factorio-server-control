@@ -96,7 +96,7 @@ func rconWatchdogProbe() {
 		return
 	}
 
-	_, err := server.runPersistentRCONCommand("status")
+	_, err := server.RunPersistentRCONCommand("status")
 	if err == nil {
 		setRconWatchdogConnected(true)
 		return
@@ -110,7 +110,7 @@ func rconWatchdogProbe() {
 		return
 	}
 
-	_, err = server.runPersistentRCONCommand("status")
+	_, err = server.RunPersistentRCONCommand("status")
 	if err == nil {
 		log.Printf("RCON watchdog: reconnected successfully")
 		setRconWatchdogConnected(true)

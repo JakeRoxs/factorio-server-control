@@ -12,9 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/OpenFactorioServerManager/factorio-server-manager/api/websocket"
 	"github.com/OpenFactorioServerManager/factorio-server-manager/bootstrap"
@@ -23,10 +25,22 @@ import (
 
 type Server struct {
 	Cmd            *exec.Cmd              `json:"-"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	VersionLabel   string                 `json:"version"`
+	VersionChannel string                 `json:"version_channel"`
 	Savefile       string                 `json:"savefile"`
 	Latency        int                    `json:"latency"`
 	BindIP         string                 `json:"bindip"`
 	Port           int                    `json:"port"`
+	RconPort       int                    `json:"rcon_port"`
+	RconPass       string                 `json:"-"`
+	Autostart      bool                   `json:"autostart"`
+	WatchdogInterval int                  `json:"watchdog_interval"`
+	LastWatchdogPing time.Time            `json:"-"`
+	PendingRestart bool                   `json:"pending_restart"`
+	ProfileID      string                 `json:"profile_id"`
+	UseMimalloc    bool                   `json:"use_mimalloc"`
 	Running        bool                   `json:"running"`
 	Stopping       bool                   `json:"stopping"`
 	Version        Version                `json:"fac_version"`
@@ -37,19 +51,24 @@ type Server struct {
 	Settings       map[string]interface{} `json:"-"`
 	Rcon           *rcon.RemoteConsole    `json:"-"`
 	LogChan        chan []string          `json:"-"`
+	RconConnected  bool                   `json:"rcon_connected"`
 	startupReady   bool
 	stopSignaled   bool
 	starting       bool
 }
 
 type ServerStatus struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
 	Savefile       string  `json:"savefile"`
 	Latency        int     `json:"latency"`
 	BindIP         string  `json:"bindip"`
 	Port           int     `json:"port"`
+	RconPort       int     `json:"rcon_port"`
 	Running        bool    `json:"running"`
 	Stopping       bool    `json:"stopping"`
 	RconConnected  bool    `json:"rcon_connected"`
+	UseMimalloc    bool    `json:"use_mimalloc"`
 	Version        Version `json:"fac_version"`
 	BaseModVersion string  `json:"base_mod_version"`
 }
@@ -126,13 +145,17 @@ func (server *Server) requestStop() bool {
 }
 
 func (server *Server) broadcastStatus() {
-	wsRoom := websocket.WebsocketHub.GetRoom("server_status")
 	response, err := json.Marshal(server.Snapshot())
 	if err != nil {
 		log.Printf("Error encoding server status: %s", err)
 		return
 	}
+	wsRoom := websocket.WebsocketHub.GetRoom("server_status")
 	wsRoom.Send(string(response))
+	if server.ID != "" {
+		perServerRoom := websocket.WebsocketHub.GetRoom("servers:" + server.ID + ":status")
+		perServerRoom.Send(string(response))
+	}
 }
 
 func (server *Server) GetRunning() bool {
@@ -163,13 +186,17 @@ func (server *Server) Snapshot() ServerStatus {
 	stateMutex.RLock()
 	defer stateMutex.RUnlock()
 	return ServerStatus{
+		ID:             server.ID,
+		Name:           server.Name,
 		Savefile:       server.Savefile,
 		Latency:        server.Latency,
 		BindIP:         server.BindIP,
 		Port:           server.Port,
+		RconPort:       server.RconPort,
 		Running:        server.Running,
 		Stopping:       server.Stopping,
-		RconConnected:  GetRconWatchdogConnected(),
+		RconConnected:  server.RconConnected,
+		UseMimalloc:    server.UseMimalloc,
 		Version:        server.Version,
 		BaseModVersion: server.BaseModVersion,
 	}
@@ -245,6 +272,7 @@ func (server *Server) closeRcon() {
 	stateMutex.Lock()
 	console := server.Rcon
 	server.Rcon = nil
+	server.RconConnected = false
 	stateMutex.Unlock()
 	if console == nil {
 		return
@@ -252,6 +280,27 @@ func (server *Server) closeRcon() {
 	if err := console.Close(); err != nil {
 		log.Printf("Error closing rcon connection: %s", err)
 	}
+}
+
+func (server *Server) connectRC() error {
+	rconPort := server.RconPort
+	if rconPort == 0 {
+		rconPort = bootstrap.GetConfig().FactorioRconPort
+	}
+	rconPass := server.RconPass
+	if rconPass == "" {
+		rconPass = bootstrap.GetConfig().FactorioRconPass
+	}
+	rconAddr := fmt.Sprintf("127.0.0.1:%d", rconPort)
+	console, err := rcon.Dial(rconAddr, rconPass)
+	if err != nil {
+		return err
+	}
+	server.setRconIfRunning(console)
+	stateMutex.Lock()
+	server.RconConnected = true
+	stateMutex.Unlock()
+	return nil
 }
 
 func (server *Server) autostart() {
@@ -775,6 +824,25 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 		log.Printf("Starting Factorio server binary: %s", config.FactorioBinary)
 		command = exec.Command(config.FactorioBinary, args...)
 	}
+
+	// Inject mimalloc memory allocator via LD_PRELOAD if enabled for this server
+	if server.UseMimalloc && runtime.GOOS == "linux" {
+		mimallocPath := os.Getenv("FSM_MIMALLOC_PATH")
+		if mimallocPath == "" {
+			mimallocPath = "/usr/lib/libmimalloc.so"
+		}
+		if _, err := os.Stat(mimallocPath); err == nil {
+			log.Printf("Injecting mimalloc memory allocator for server %s: %s", server.ID, mimallocPath)
+			command.Env = append(os.Environ(),
+				"LD_PRELOAD="+mimallocPath,
+				"MIMALLOC_LARGE_OS_PAGES=1",
+				"MIMALLOC_EAGER_COMMITS=0",
+				"MIMALLOC_PURGE_DELAY=0",
+			)
+		} else {
+			log.Printf("Warning: mimalloc enabled for server %s but library not found at %s. Starting without mimalloc.", server.ID, mimallocPath)
+		}
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("open Factorio stdout: %w", err)
@@ -904,7 +972,7 @@ func serverWebsocketControl(controls websocket.WsControls) {
 		command := controls.Value
 		server := GetFactorioServer()
 		if server.GetRunning() {
-			response, err := server.runPersistentRCONCommand(command)
+			response, err := server.RunPersistentRCONCommand(command)
 			if err != nil {
 				log.Printf("Error running RCON command: %s", err)
 				return

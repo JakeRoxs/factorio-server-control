@@ -54,6 +54,8 @@ type Profile struct {
 	Port               int       `json:"port"`
 	SaveCount          int       `json:"save_count"`
 	ModCount           int       `json:"mod_count"`
+	ServerID           string    `json:"server_id,omitempty"`
+	IsGlobal           bool      `json:"is_global,omitempty"`
 }
 
 type ProfileState struct {
@@ -571,22 +573,12 @@ func captureActiveProfile(profile Profile) (Profile, error) {
 		return Profile{}, err
 	}
 	snapshot := GetFactorioServer().Snapshot()
-	installedVersion := runtimeState.InstalledVersion
-	if installedVersion == "" {
-		installedVersion = snapshot.BaseModVersion
-	}
-	if installedVersion == "" {
-		installedVersion = snapshot.Version.ReleaseString()
-	}
-	installedVersion, err = NormalizeExactReleaseVersion(installedVersion)
+
+	installedVersion, err := resolveInstalledVersion(runtimeState, snapshot)
 	if err != nil {
 		return Profile{}, err
 	}
-	releaseTarget := runtimeState.ReleaseTarget
-	if releaseTarget == "" {
-		releaseTarget = installedVersion
-	}
-	releaseTarget, err = NormalizeReleaseTarget(releaseTarget)
+	releaseTarget, err := resolveReleaseTarget(runtimeState, installedVersion)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -595,13 +587,6 @@ func captureActiveProfile(profile Profile) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	enabledBuiltIns := make([]string, 0, len(mode.Features))
-	for _, feature := range mode.Features {
-		if feature.Enabled {
-			enabledBuiltIns = append(enabledBuiltIns, feature.Name)
-		}
-	}
-	sort.Strings(enabledBuiltIns)
 
 	directories := profileActiveDirectories()
 	saveCount, err := countUsableSaves(directories["saves"])
@@ -612,34 +597,18 @@ func captureActiveProfile(profile Profile) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	selectedSave := snapshot.Savefile
-	if saveCount == 0 {
-		selectedSave = ""
-	} else if selectedSave == "" {
-		if latest, latestErr := GetLatestSave(); latestErr == nil {
-			selectedSave = latest.Name
-		}
-	}
-	bindIP := snapshot.BindIP
-	if bindIP == "" {
-		bindIP = bootstrap.GetConfig().FactorioIP
-	}
-	if bindIP == "" {
-		bindIP = "0.0.0.0"
-	}
-	port := snapshot.Port
-	if port == 0 {
-		port = 34197
-	}
 
 	profile.Active = true
 	profile.ReleaseTarget = releaseTarget
 	profile.InstalledVersion = installedVersion
 	profile.GameMode = mode.Mode
-	profile.EnabledBuiltInMods = enabledBuiltIns
-	profile.SelectedSave = selectedSave
-	profile.BindIP = bindIP
-	profile.Port = port
+	profile.EnabledBuiltInMods = collectEnabledBuiltIns(mode)
+	profile.SelectedSave = resolveSelectedSave(snapshot, saveCount)
+	profile.BindIP = resolveBindIP(snapshot)
+	profile.Port = snapshot.Port
+	if profile.Port == 0 {
+		profile.Port = 34197
+	}
 	profile.SaveCount = saveCount
 	profile.ModCount = modCount
 	profile.UpdatedAt = profileNow().UTC()
@@ -647,6 +616,60 @@ func captureActiveProfile(profile Profile) (Profile, error) {
 		profile.CreatedAt = profile.UpdatedAt
 	}
 	return profile, nil
+}
+
+func resolveInstalledVersion(runtimeState RuntimeState, snapshot ServerStatus) (string, error) {
+	version := runtimeState.InstalledVersion
+	if version == "" {
+		version = snapshot.BaseModVersion
+	}
+	if version == "" {
+		version = snapshot.Version.ReleaseString()
+	}
+	return NormalizeExactReleaseVersion(version)
+}
+
+func resolveReleaseTarget(runtimeState RuntimeState, installedVersion string) (string, error) {
+	target := runtimeState.ReleaseTarget
+	if target == "" {
+		target = installedVersion
+	}
+	return NormalizeReleaseTarget(target)
+}
+
+func collectEnabledBuiltIns(mode GameModeStatus) []string {
+	enabled := make([]string, 0, len(mode.Features))
+	for _, feature := range mode.Features {
+		if feature.Enabled {
+			enabled = append(enabled, feature.Name)
+		}
+	}
+	sort.Strings(enabled)
+	return enabled
+}
+
+func resolveSelectedSave(snapshot ServerStatus, saveCount int) string {
+	selected := snapshot.Savefile
+	if saveCount == 0 {
+		return ""
+	}
+	if selected == "" {
+		if latest, err := GetLatestSave(); err == nil {
+			return latest.Name
+		}
+	}
+	return selected
+}
+
+func resolveBindIP(snapshot ServerStatus) string {
+	bindIP := snapshot.BindIP
+	if bindIP == "" {
+		bindIP = bootstrap.GetConfig().FactorioIP
+	}
+	if bindIP == "" {
+		bindIP = "0.0.0.0"
+	}
+	return bindIP
 }
 
 func ensureActiveProfileDirectories() error {
@@ -1134,6 +1157,314 @@ func validateProfileID(id string) error {
 	if err != nil || len(decoded) != 8 {
 		return errors.New("invalid profile id")
 	}
+	return nil
+}
+
+// ListProfilesForServer returns all profiles associated with a specific server,
+// plus all global profiles (templates) that can be applied to any server.
+func ListProfilesForServer(serverID string) (ProfileState, error) {
+	profileDataGate.RLock()
+	defer profileDataGate.RUnlock()
+	profileMutex.Lock()
+	defer profileMutex.Unlock()
+
+	manifest, err := loadProfileManifest()
+	if err != nil {
+		return ProfileState{}, err
+	}
+
+	var serverProfiles []Profile
+	for _, p := range manifest.Profiles {
+		if p.ServerID == serverID || p.IsGlobal {
+			serverProfiles = append(serverProfiles, p)
+		}
+	}
+
+	return ProfileState{
+		SchemaVersion:   manifest.SchemaVersion,
+		ActiveProfileID: manifest.ActiveProfileID,
+		Profiles:        serverProfiles,
+	}, nil
+}
+
+// CreateServerProfile creates a new profile associated with a specific server.
+func CreateServerProfile(serverID, name, description string) (ProfileState, error) {
+	profileDataGate.Lock()
+	defer profileDataGate.Unlock()
+	profileMutex.Lock()
+	defer profileMutex.Unlock()
+
+	if err := ensureProfileServerStopped(); err != nil {
+		return ProfileState{}, err
+	}
+	name, description, err := validateProfileText(name, description)
+	if err != nil {
+		return ProfileState{}, err
+	}
+
+	manifest, err := loadProfileManifest()
+	if err != nil {
+		return ProfileState{}, err
+	}
+	if profileNameExists(manifest, name, "") {
+		return ProfileState{}, ErrProfileNameConflict
+	}
+
+	id, err := newProfileID()
+	if err != nil {
+		return ProfileState{}, err
+	}
+	now := profileNow().UTC()
+	profile := Profile{
+		ID:          id,
+		Name:        name,
+		Description: description,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		ServerID:    serverID,
+	}
+	profile, err = captureActiveProfile(profile)
+	if err != nil {
+		return ProfileState{}, err
+	}
+	profile.Active = false
+
+	if err := snapshotActiveProfile(id); err != nil {
+		return ProfileState{}, fmt.Errorf("clone current setup: %w", err)
+	}
+
+	manifest.Profiles = append(manifest.Profiles, profile)
+	if err := saveProfileManifest(manifest); err != nil {
+		_ = os.RemoveAll(profileDirectory(id))
+		return ProfileState{}, err
+	}
+	return stateFromManifest(manifest), nil
+}
+
+// CreateGlobalProfile creates a new global profile template that can be applied
+// to any server. Global profiles contain mod lists and settings as templates.
+func CreateGlobalProfile(name, description string) (ProfileState, error) {
+	profileDataGate.Lock()
+	defer profileDataGate.Unlock()
+	profileMutex.Lock()
+	defer profileMutex.Unlock()
+
+	if err := ensureProfileServerStopped(); err != nil {
+		return ProfileState{}, err
+	}
+	name, description, err := validateProfileText(name, description)
+	if err != nil {
+		return ProfileState{}, err
+	}
+
+	manifest, err := loadProfileManifest()
+	if err != nil {
+		return ProfileState{}, err
+	}
+	if profileNameExists(manifest, name, "") {
+		return ProfileState{}, ErrProfileNameConflict
+	}
+
+	id, err := newProfileID()
+	if err != nil {
+		return ProfileState{}, err
+	}
+	now := profileNow().UTC()
+	profile := Profile{
+		ID:          id,
+		Name:        name,
+		Description: description,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		IsGlobal:    true,
+	}
+	profile, err = captureActiveProfile(profile)
+	if err != nil {
+		return ProfileState{}, err
+	}
+	profile.Active = false
+
+	if err := snapshotActiveProfile(id); err != nil {
+		return ProfileState{}, fmt.Errorf("clone current setup: %w", err)
+	}
+
+	manifest.Profiles = append(manifest.Profiles, profile)
+	if err := saveProfileManifest(manifest); err != nil {
+		_ = os.RemoveAll(profileDirectory(id))
+		return ProfileState{}, err
+	}
+	return stateFromManifest(manifest), nil
+}
+
+// ApplyGlobalProfileToServer applies a global profile template to a specific
+// server, creating a per-server instance of that global profile.
+func ApplyGlobalProfileToServer(serverID, globalProfileID string) (ProfileState, error) {
+	profileDataGate.Lock()
+	defer profileDataGate.Unlock()
+	profileMutex.Lock()
+	defer profileMutex.Unlock()
+
+	if err := ensureProfileServerStopped(); err != nil {
+		return ProfileState{}, err
+	}
+	if err := validateProfileID(globalProfileID); err != nil {
+		return ProfileState{}, ErrProfileNotFound
+	}
+
+	manifest, err := loadProfileManifest()
+	if err != nil {
+		return ProfileState{}, err
+	}
+
+	// Find the global profile
+	var globalProfile *Profile
+	for i := range manifest.Profiles {
+		if manifest.Profiles[i].ID == globalProfileID && manifest.Profiles[i].IsGlobal {
+			globalProfile = &manifest.Profiles[i]
+			break
+		}
+	}
+	if globalProfile == nil {
+		return ProfileState{}, ErrProfileNotFound
+	}
+
+	// Create a new per-server profile based on the global template
+	id, err := newProfileID()
+	if err != nil {
+		return ProfileState{}, err
+	}
+	now := profileNow().UTC()
+	profile := Profile{
+		ID:                 id,
+		Name:               globalProfile.Name + " (" + serverID + ")",
+		Description:        "Applied from global profile " + globalProfile.Name,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		ServerID:           serverID,
+		ReleaseTarget:      globalProfile.ReleaseTarget,
+		InstalledVersion:   globalProfile.InstalledVersion,
+		GameMode:           globalProfile.GameMode,
+		EnabledBuiltInMods: globalProfile.EnabledBuiltInMods,
+		SelectedSave:       "",
+		BindIP:             "0.0.0.0",
+		Port:               34197,
+	}
+
+	// Copy the mods and settings from the global profile
+	if err := copyProfileData(globalProfileID, id); err != nil {
+		return ProfileState{}, fmt.Errorf("copy profile data: %w", err)
+	}
+
+	manifest.Profiles = append(manifest.Profiles, profile)
+	if err := saveProfileManifest(manifest); err != nil {
+		_ = os.RemoveAll(profileDirectory(id))
+		return ProfileState{}, err
+	}
+
+	// Assign the new profile to the server
+	if err := AssignProfileToServer(serverID, id); err != nil {
+		return ProfileState{}, err
+	}
+
+	return stateFromManifest(manifest), nil
+}
+
+func copyProfileData(sourceID, destID string) error {
+	sourceDir := profileDirectory(sourceID)
+	destDir := profileDirectory(destID)
+
+	for _, subDir := range []string{"mods", "config"} {
+		srcPath := filepath.Join(sourceDir, subDir)
+		dstPath := filepath.Join(destDir, subDir)
+
+		if err := os.MkdirAll(dstPath, 0755); err != nil {
+			return err
+		}
+
+		entries, err := os.ReadDir(srcPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			srcFile := filepath.Join(srcPath, entry.Name())
+			dstFile := filepath.Join(dstPath, entry.Name())
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if err := copyProfileFile(srcFile, dstFile, info); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// AssignProfileToServer sets a profile as the active profile for a specific server.
+func AssignProfileToServer(serverID, profileID string) error {
+	profileDataGate.Lock()
+	defer profileDataGate.Unlock()
+	profileMutex.Lock()
+	defer profileMutex.Unlock()
+
+	if err := ensureProfileServerStopped(); err != nil {
+		return err
+	}
+	if err := validateProfileID(profileID); err != nil {
+		return ErrProfileNotFound
+	}
+
+	manifest, err := loadProfileManifest()
+	if err != nil {
+		return err
+	}
+
+	// Find the profile
+	var found *Profile
+	for i := range manifest.Profiles {
+		if manifest.Profiles[i].ID == profileID {
+			found = &manifest.Profiles[i]
+			break
+		}
+	}
+	if found == nil {
+		return ErrProfileNotFound
+	}
+
+	// Set the profile's server ID and mark it active
+	found.ServerID = serverID
+	found.Active = true
+
+	// Deactivate other profiles for this server
+	for i := range manifest.Profiles {
+		if manifest.Profiles[i].ServerID == serverID && manifest.Profiles[i].ID != profileID {
+			manifest.Profiles[i].Active = false
+		}
+	}
+
+	if err := saveProfileManifest(manifest); err != nil {
+		return err
+	}
+
+	// Update the server's profile ID
+	manager := GetServerManager()
+	if manager != nil {
+		server, ok := manager.GetServer(serverID)
+		if ok {
+			server.ProfileID = profileID
+			if err := manager.UpdateServer(server); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
