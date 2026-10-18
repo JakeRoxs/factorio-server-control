@@ -17,7 +17,7 @@ const (
 )
 
 func setJSON(w http.ResponseWriter) {
-	setJSON(w)
+	w.Header().Set(headerContentType, contentTypeJSON)
 }
 
 func ListServersHandler(w http.ResponseWriter, r *http.Request) {

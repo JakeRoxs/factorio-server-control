@@ -829,9 +829,19 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 	if server.UseMimalloc && runtime.GOOS == "linux" {
 		mimallocPath := os.Getenv("FSM_MIMALLOC_PATH")
 		if mimallocPath == "" {
-			mimallocPath = "/usr/lib/libmimalloc.so"
+			// Try common locations for the mimalloc shared library
+			for _, path := range []string{
+				"/usr/lib/x86_64-linux-gnu/libmimalloc.so.2",
+				"/usr/lib/x86_64-linux-gnu/libmimalloc.so",
+				"/usr/lib/libmimalloc.so",
+			} {
+				if _, err := os.Stat(path); err == nil {
+					mimallocPath = path
+					break
+				}
+			}
 		}
-		if _, err := os.Stat(mimallocPath); err == nil {
+		if mimallocPath != "" {
 			log.Printf("Injecting mimalloc memory allocator for server %s: %s", server.ID, mimallocPath)
 			command.Env = append(os.Environ(),
 				"LD_PRELOAD="+mimallocPath,
@@ -840,7 +850,7 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 				"MIMALLOC_PURGE_DELAY=0",
 			)
 		} else {
-			log.Printf("Warning: mimalloc enabled for server %s but library not found at %s. Starting without mimalloc.", server.ID, mimallocPath)
+			log.Printf("Warning: mimalloc enabled for server %s but library not found. Starting without mimalloc.", server.ID)
 		}
 	}
 	stdout, err := command.StdoutPipe()

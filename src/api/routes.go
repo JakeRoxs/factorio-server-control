@@ -197,6 +197,10 @@ func NewRouter() *mux.Router {
 		Methods("GET").
 		Name("Profiles").
 		Handler(frontendFileHandler("/profiles"))
+	subRouter.Path("/servers").
+		Methods("GET").
+		Name("Servers").
+		Handler(frontendFileHandler("/servers"))
 	subRouter.Path("/user-management").
 		Methods("GET").
 		Name("User management").

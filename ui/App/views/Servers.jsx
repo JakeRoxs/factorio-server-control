@@ -71,11 +71,16 @@ const Servers = ({canManage = false}) => {
 
     useEffect(() => {
         if (!canManage) return undefined;
-        socket.subscribe("servers", () => {
+        socket.emit("servers subscribe");
+        const handler = () => {
             loadServers();
             servers.forEach(s => loadProfilesForServer(s.id));
-        });
-        return () => socket.unsubscribe("servers");
+        };
+        socket.on("servers", handler);
+        return () => {
+            socket.off("servers", handler);
+            socket.emit("servers unsubscribe");
+        };
     }, [canManage, loadServers, servers, loadProfilesForServer]);
 
     const handleStartServer = async (server) => {

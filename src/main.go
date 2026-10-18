@@ -41,6 +41,10 @@ func main() {
 		log.Printf("Error initializing Factorio profiles: %v\n", err)
 		return
 	}
+	if _, err := factorio.InitServerManager(); err != nil {
+		log.Printf("Error initializing server manager: %v\n", err)
+		return
+	}
 	factorio.StartConfiguredAutostart()
 	factorio.StartMapSnapshotScheduler()
 
