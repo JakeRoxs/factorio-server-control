@@ -207,6 +207,32 @@ const Releases = ({serverStatus, refreshServerStatus, canManage = false}) => {
                 {targetType === "latest" && <Alert type="warning" className="mt-4">
                     Experimental updates can move to a new Factorio compatibility line. Mod search follows the installed version after the switch.
                 </Alert>}
+                {releaseStatus?.available_versions?.length > 0 && <div className="ui-subcard mt-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-semibold text-white">Available versions</h4>
+                        <span className="text-xs text-gray-500">{releaseStatus.available_versions.length} versions</span>
+                    </div>
+                    <div className="ui-release-versions max-h-64 overflow-y-auto">
+                        {releaseStatus.available_versions.map(version => {
+                            const isInstalled = releaseStatus?.installed_version === version;
+                            const isTarget = activeProfile?.release_target === version;
+                            return <div className="ui-release-version-row" key={version}>
+                                <span className="ui-release-version-number font-mono">{version}</span>
+                                <div className="flex items-center gap-2">
+                                    {isInstalled && <span className="ui-status-badge ui-status-badge--running">Installed</span>}
+                                    {isTarget && !isInstalled && <span className="ui-status-badge ui-status-badge--stopping">Target</span>}
+                                    {canManage && !isInstalled && <Button
+                                        type="secondary"
+                                        size="sm"
+                                        isDisabled={locked || installing}
+                                        onClick={() => { setTargetType("exact"); setExactVersion(version); setSelectionValid(true); }}>
+                                        Install
+                                    </Button>}
+                                </div>
+                            </div>;
+                        })}
+                    </div>
+                </div>}
             </>}
             actions={canManage ? <Button type="success" onClick={install} isLoading={installing} isDisabled={locked || isLoading || Boolean(releaseLoadError) || !selectionIsValid}>
                 <FontAwesomeIcon icon={faCloudArrowDown}/> {selectionIsInstalled ? "Reinstall" : "Install"} {selectedTarget || "version"}
@@ -239,9 +265,39 @@ const Releases = ({serverStatus, refreshServerStatus, canManage = false}) => {
                     />)}
                 </div>
                 {modeStatus?.features?.length > 0 && <div className="ui-feature-state mt-4">
-                    {modeStatus.features.map(feature => <span className={`ui-status-badge ${feature.enabled ? "ui-status-badge--running" : "ui-status-badge--stopped"}`} key={feature.name}>
-                        {feature.name}: {feature.enabled ? "on" : "off"}
-                    </span>)}
+                    <div className="flex flex-col gap-2">
+                        {modeStatus.features.map(feature => {
+                            const featureLabels = {
+                                "space-age": "Space Age",
+                                "quality": "Quality of Life",
+                                "elevated-rails": "Elevated Rails"
+                            };
+                            return <div className="flex items-center justify-between gap-2" key={feature.name}>
+                                <span className="text-sm text-white">{featureLabels[feature.name] || feature.name}</span>
+                                <label className="inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="sr-only"
+                                        checked={feature.enabled}
+                                        disabled={locked || savingMode || isLoading || Boolean(modeLoadError)}
+                                        onChange={async () => {
+                                            try {
+                                                const result = await server.setDLCMods({[feature.name]: !feature.enabled});
+                                                setModeStatus(result);
+                                                setMode(["factorio", "space-age"].includes(result.mode) ? result.mode : null);
+                                                window.flash(`${featureLabels[feature.name] || feature.name} ${!feature.enabled ? "enabled" : "disabled"}.`, "green");
+                                            } catch (error) {
+                                                window.flash(error?.response?.data || "DLC mod could not be changed.", "red");
+                                            }
+                                        }}
+                                    />
+                                    <span className={`relative inline-block w-9 h-5 rounded-full transition-colors ${feature.enabled ? "bg-green" : "bg-gray-600"}`}>
+                                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${feature.enabled ? "translate-x-4" : ""}`}/>
+                                    </span>
+                                </label>
+                            </div>;
+                        })}
+                    </div>
                 </div>}
             </>}
             actions={canManage ? <Button type="success" onClick={saveGameMode} isLoading={savingMode} isDisabled={locked || isLoading || Boolean(modeLoadError) || !mode || modeStatus?.mode === mode}>

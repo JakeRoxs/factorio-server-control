@@ -355,14 +355,18 @@ func ImportModsFromSaveHandler(w http.ResponseWriter, r *http.Request) {
 
 	var request struct {
 		Name string `json:"saveFile"`
+		Mode string `json:"mode"`
 	}
 	var err error
 	resp, err = ReadFromRequestBody(w, r, &request)
 	if err != nil {
 		return
 	}
+	if request.Mode == "" {
+		request.Mode = "match"
+	}
 
-	result, err := factorio.ImportModsFromSave(request.Name)
+	result, err := factorio.ImportModsFromSaveWithMode(request.Name, request.Mode)
 	if err != nil {
 		log.Printf("Unable to import mods from selected save: %v", err)
 		if errors.Is(err, factorio.ErrServerActive) {

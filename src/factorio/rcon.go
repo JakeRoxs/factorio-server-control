@@ -41,6 +41,7 @@ func connectRC() error {
 		return server.signalStop()
 	}
 	startCheckpointMonitor(server)
+	startRconWatchdog()
 
 	return nil
 }

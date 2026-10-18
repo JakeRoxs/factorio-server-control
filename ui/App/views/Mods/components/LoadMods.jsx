@@ -20,6 +20,7 @@ const LoadMods = ({refreshMods}) => {
     const [isApplying, setIsApplying] = useState(false);
     const [isFactorioAuthenticated, setIsFactorioAuthenticated] = useState(false);
     const [loadModsData, setLoadModsData] = useState(undefined);
+    const [importMode, setImportMode] = useState("match");
 
     useEffect(() => {
         let active = true;
@@ -37,7 +38,7 @@ const LoadMods = ({refreshMods}) => {
     const loadMods = async data => {
         setIsApplying(true);
         try {
-            const result = await savesResource.importMods(data.save);
+            const result = await savesResource.importMods(data.save, importMode);
             await refreshMods();
             const feedback = saveModImportFeedback(data.save, result);
             window.flash(feedback.message, feedback.color);
@@ -51,16 +52,43 @@ const LoadMods = ({refreshMods}) => {
 
     if (!isFactorioAuthenticated) return <FactorioLogin setIsFactorioAuthenticated={setIsFactorioAuthenticated}/>;
 
-    return <form onSubmit={handleSubmit(setLoadModsData)}>
-        <Alert type="warning" className="mb-4">Importing replaces every currently installed mod with the enabled mods recorded in the selected save. Unavailable releases or mismatched Mod Portal archives are skipped and reported. Other preparation failures leave the current set active.</Alert>
+    return <form onSubmit={handleSubmit(data => setLoadModsData(data))}>
+        <Alert type="warning" className="mb-4">{importMode === "match" ? "Match mode replaces every currently installed mod with the enabled mods recorded in the selected save." : "Add mode only installs mods from the save that are not already installed. Existing mods are kept."} Unavailable releases or mismatched Mod Portal archives are skipped and reported. Other preparation failures leave the current set active.</Alert>
         <div className="mb-4">
             <Label text="Source save" htmlFor="save"/>
             <Select register={register("save", {required: true})} disabled={saves.length === 0 || isApplying} options={saves.map(save => ({name: save.name, value: save.name}))}/>
         </div>
+        <div className="mb-4">
+            <Label text="Import mode"/>
+            <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                        type="radio"
+                        name="importMode"
+                        value="match"
+                        checked={importMode === "match"}
+                        onChange={() => setImportMode("match")}
+                        disabled={isApplying}
+                    />
+                    <span>Match (replace all)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                        type="radio"
+                        name="importMode"
+                        value="add"
+                        checked={importMode === "add"}
+                        onChange={() => setImportMode("add")}
+                        disabled={isApplying}
+                    />
+                    <span>Add (keep existing)</span>
+                </label>
+            </div>
+        </div>
         <Button isSubmit isDisabled={saves.length === 0} isLoading={isApplying}><FontAwesomeIcon icon={faFileImport}/> Review import</Button>
         <ConfirmDialog
-            title="Replace installed mods?"
-            content={`Importing from "${loadModsData?.save || ""}" prepares an atomic replacement before activating it. Unavailable releases or mismatched archives will be skipped.`}
+            title={importMode === "match" ? "Replace installed mods?" : "Add mods from save?"}
+            content={`Importing from "${loadModsData?.save || ""}" in ${importMode} mode ${importMode === "match" ? "prepares an atomic replacement before activating it" : "downloads only missing mods and keeps existing ones"}. Unavailable releases or mismatched archives will be skipped.`}
             isOpen={Boolean(loadModsData)}
             close={() => setLoadModsData(undefined)}
             onSuccess={() => loadMods(loadModsData)}

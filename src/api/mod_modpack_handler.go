@@ -1,10 +1,13 @@
 package api
 
 import (
+	"archive/zip"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/OpenFactorioServerManager/factorio-server-manager/bootstrap"
@@ -503,4 +506,57 @@ func ModPackModPortalInstallMultipleHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp = modList.ListInstalledMods()
+}
+
+func PublicModPackShareHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	modPackName := vars["modpack"]
+	if modPackName == "" {
+		http.Error(w, "modpack name required", http.StatusBadRequest)
+		return
+	}
+	if err := factorio.ValidatePathElement(modPackName); err != nil {
+		http.Error(w, "invalid modpack name", http.StatusBadRequest)
+		return
+	}
+
+	config := bootstrap.GetConfig()
+	modPackPath := filepath.Join(config.FactorioModPackDir, modPackName)
+
+	packMap, err := factorio.NewModPackMap()
+	if err != nil {
+		http.Error(w, "unable to load modpack list", http.StatusInternalServerError)
+		return
+	}
+	if !packMap.CheckModPackExists(modPackName) {
+		http.Error(w, "modpack not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, modPackName))
+	w.Header().Set("Content-Type", "application/zip")
+	w.WriteHeader(http.StatusOK)
+
+	zipWriter := zip.NewWriter(w)
+	defer zipWriter.Close()
+
+	err = filepath.Walk(modPackPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		writer, err := zipWriter.Create(info.Name())
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		_, err = io.Copy(writer, file)
+		return err
+	})
+	if err != nil {
+		log.Printf("error creating modpack share zip: %s", err)
+	}
 }

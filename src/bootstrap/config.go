@@ -64,6 +64,7 @@ type Config struct {
 	ConsoleLogFile          string `json:"console_log_file,omitempty"`
 	ChatLogFile             string `json:"chat_log_file,omitempty"` // separate log file for chat (incl join/quit)
 	Secure                  bool   `json:"secure"`                  // set to `false` to use this tool without SSL/TLS (Default: `true`)
+	RconWatchdogInterval    int    `json:"rcon_watchdog_interval,omitempty"` // seconds between RCON health probes (0 = disabled, default 30)
 }
 
 // set Configs default values. JSON unmarshal will replace when it found something different

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -36,12 +37,19 @@ type SaveModImportResult struct {
 	Skipped    []SaveModImportSkipped `json:"skipped"`
 }
 
-// ImportModsFromSave replaces the active profile's mod set with the enabled
+// ImportModsFromSave replaces or adds the active profile's mod set with the enabled
 // mods recorded in a save. The replacement is staged below the mounted mods
 // directory and becomes visible only after every available Mod Portal archive
 // and built-in feature has been validated. Permanently unavailable releases
 // and mismatched portal archives are omitted and reported in the result.
 func ImportModsFromSave(saveName string) (SaveModImportResult, error) {
+	return ImportModsFromSaveWithMode(saveName, "match")
+}
+
+func ImportModsFromSaveWithMode(saveName string, mode string) (SaveModImportResult, error) {
+	if mode != "add" && mode != "match" {
+		return SaveModImportResult{}, fmt.Errorf("invalid import mode %q, use 'add' or 'match'", mode)
+	}
 	profileDataGate.RLock()
 	defer profileDataGate.RUnlock()
 	serverLifecycleMutex.Lock()
@@ -74,10 +82,14 @@ func ImportModsFromSave(saveName string) (SaveModImportResult, error) {
 	if err != nil {
 		return SaveModImportResult{}, err
 	}
-	return replaceModsFromSave(config.FactorioDir, config.FactorioModsDir, requested, installSaveModFromPortal)
+	return replaceModsFromSaveWithMode(config.FactorioDir, config.FactorioModsDir, requested, installSaveModFromPortal, mode)
 }
 
 func replaceModsFromSave(factorioDirectory, destination string, requested []Mod, installPortal saveModPortalInstaller) (SaveModImportResult, error) {
+	return replaceModsFromSaveWithMode(factorioDirectory, destination, requested, installPortal, "match")
+}
+
+func replaceModsFromSaveWithMode(factorioDirectory, destination string, requested []Mod, installPortal saveModPortalInstaller, mode string) (SaveModImportResult, error) {
 	requested, err := validateSaveModImport(requested)
 	if err != nil {
 		return SaveModImportResult{}, err
@@ -85,65 +97,18 @@ func replaceModsFromSave(factorioDirectory, destination string, requested []Mod,
 	if installPortal == nil {
 		return SaveModImportResult{}, errors.New("save mod portal installer is not configured")
 	}
-	// Save import selects a mod set; it must not silently replace the active
-	// profile's independent startup/runtime setting values. Settings for newly
-	// imported mods remain absent and therefore use Factorio's defaults.
-	existingSettings, err := readBoundedRegularFile(filepath.Join(destination, "mod-settings.dat"), maximumModSettingsFileBytes, true)
-	if err != nil {
-		return SaveModImportResult{}, fmt.Errorf("preserve profile mod settings: %w", err)
-	}
 
-	swap, err := newDirectoryEntrySwap(destination, ".mods-save-import-staging-", ".mods-save-import-backup-")
+	swap, err := stageSaveModImport(destination, mode)
 	if err != nil {
-		return SaveModImportResult{}, fmt.Errorf("stage save mod import: %w", err)
+		return SaveModImportResult{}, err
 	}
 	defer swap.cleanup()
 
-	staged, err := NewMods(swap.staging)
+	enabledSpaceAgeFeatures, skipped, err := processRequestedSaveMods(swap, factorioDirectory, requested, installPortal)
 	if err != nil {
-		return SaveModImportResult{}, fmt.Errorf("initialize staged save mod import: %w", err)
-	}
-	if len(existingSettings) > 0 {
-		if err := os.WriteFile(filepath.Join(swap.staging, "mod-settings.dat"), existingSettings, 0600); err != nil {
-			return SaveModImportResult{}, fmt.Errorf("stage profile mod settings: %w", err)
-		}
-	}
-	enabledSpaceAgeFeatures := make([]string, 0, len(spaceAgeFeatureMods))
-	skipped := make([]SaveModImportSkipped, 0)
-	for _, mod := range requested {
-		if mod.Name == "base" || mod.Name == "core" {
-			continue
-		}
-		builtIn, err := installedBuiltInMod(factorioDirectory, mod.Name)
-		if err != nil {
-			return SaveModImportResult{}, err
-		}
-		if builtIn {
-			if err := staged.ModSimpleList.SetModEnabled(mod.Name, true); err != nil {
-				return SaveModImportResult{}, fmt.Errorf("enable built-in mod %s: %w", mod.Name, err)
-			}
-			if isSpaceAgeFeatureMod(mod.Name) {
-				enabledSpaceAgeFeatures = append(enabledSpaceAgeFeatures, mod.Name)
-			}
-			continue
-		}
-		if isSpaceAgeFeatureMod(mod.Name) {
-			return SaveModImportResult{}, fmt.Errorf("Space Age feature %s is not available in this Factorio installation", mod.Name)
-		}
-		if err := installPortal(&staged, mod); err != nil {
-			reason, canSkip := saveModImportSkipReason(err)
-			if !canSkip {
-				return SaveModImportResult{}, fmt.Errorf("stage mod %s %s: %w", mod.Name, mod.Version.String(), err)
-			}
-			log.Printf("Skipping save-required mod %s %s during import: %v", mod.Name, mod.Version.String(), err)
-			skipped = append(skipped, SaveModImportSkipped{Name: mod.Name, Version: mod.Version, Reason: reason})
-			continue
-		}
+		return SaveModImportResult{}, err
 	}
 
-	// The synchronized list retains the enabled built-ins required by the save.
-	// Record every expansion feature explicitly so importing a base-game save
-	// cannot inherit Space Age through Factorio's built-in defaults.
 	if err := setBuiltInFeatureMods(swap.staging, enabledSpaceAgeFeatures); err != nil {
 		return SaveModImportResult{}, fmt.Errorf("stage imported game mode: %w", err)
 	}
@@ -159,6 +124,112 @@ func replaceModsFromSave(factorioDirectory, destination string, requested []Mod,
 		log.Printf("Imported save mods are active but transactional backup cleanup failed: %v", err)
 	}
 	return SaveModImportResult{ModsResult: installed.ModsResult, Skipped: skipped}, nil
+}
+
+func stageSaveModImport(destination, mode string) (*directoryEntrySwap, error) {
+	existingSettings, err := readBoundedRegularFile(filepath.Join(destination, "mod-settings.dat"), maximumModSettingsFileBytes, true)
+	if err != nil {
+		return nil, fmt.Errorf("preserve profile mod settings: %w", err)
+	}
+
+	swap, err := newDirectoryEntrySwap(destination, ".mods-save-import-staging-", ".mods-save-import-backup-")
+	if err != nil {
+		return nil, fmt.Errorf("stage save mod import: %w", err)
+	}
+
+	staged, err := NewMods(swap.staging)
+	if err != nil {
+		swap.cleanup()
+		return nil, fmt.Errorf("initialize staged save mod import: %w", err)
+	}
+	if len(existingSettings) > 0 {
+		if err := os.WriteFile(filepath.Join(swap.staging, "mod-settings.dat"), existingSettings, 0600); err != nil {
+			swap.cleanup()
+			return nil, fmt.Errorf("stage profile mod settings: %w", err)
+		}
+	}
+
+	if mode == "add" {
+		if err := copyExistingModsWithSettings(swap, destination, &staged); err != nil {
+			swap.cleanup()
+			return nil, err
+		}
+	}
+	return swap, nil
+}
+
+func copyExistingModsWithSettings(swap *directoryEntrySwap, destination string, staged *Mods) error {
+	existingMods, err := NewMods(destination)
+	if err != nil {
+		return nil
+	}
+	for _, mod := range existingMods.ListInstalledMods().ModsResult {
+		if mod.Name == "base" || mod.Name == "core" {
+			continue
+		}
+		srcPath := filepath.Join(destination, mod.Name+".zip")
+		dstPath := filepath.Join(swap.staging, mod.Name+".zip")
+		if _, err := os.Stat(srcPath); err == nil {
+			if _, err := copyFile(srcPath, dstPath, 0600); err != nil {
+				return fmt.Errorf("copy existing mod %s to staging: %w", mod.Name, err)
+			}
+		}
+		if err := staged.ModSimpleList.SetModEnabled(mod.Name, true); err != nil {
+			return fmt.Errorf("enable existing mod %s in staging: %w", mod.Name, err)
+		}
+	}
+	return nil
+}
+
+func processRequestedSaveMods(swap *directoryEntrySwap, factorioDirectory string, requested []Mod, installPortal saveModPortalInstaller) ([]string, []SaveModImportSkipped, error) {
+	staged, err := NewMods(swap.staging)
+	if err != nil {
+		return nil, nil, fmt.Errorf("re-open staged save mod import: %w", err)
+	}
+
+	enabledSpaceAgeFeatures := make([]string, 0, len(spaceAgeFeatureMods))
+	skipped := make([]SaveModImportSkipped, 0)
+	for _, mod := range requested {
+		wasSpaceAge, wasSkipped, err := processSingleSaveMod(factorioDirectory, &staged, mod, installPortal)
+		if err != nil {
+			return nil, nil, err
+		}
+		if wasSpaceAge {
+			enabledSpaceAgeFeatures = append(enabledSpaceAgeFeatures, mod.Name)
+		}
+		if wasSkipped != nil {
+			skipped = append(skipped, *wasSkipped)
+		}
+	}
+	return enabledSpaceAgeFeatures, skipped, nil
+}
+
+func processSingleSaveMod(factorioDirectory string, staged *Mods, mod Mod, installPortal saveModPortalInstaller) (bool, *SaveModImportSkipped, error) {
+	if mod.Name == "base" || mod.Name == "core" {
+		return false, nil, nil
+	}
+	builtIn, err := installedBuiltInMod(factorioDirectory, mod.Name)
+	if err != nil {
+		return false, nil, err
+	}
+	if builtIn {
+		if err := staged.ModSimpleList.SetModEnabled(mod.Name, true); err != nil {
+			return false, nil, fmt.Errorf("enable built-in mod %s: %w", mod.Name, err)
+		}
+		return isSpaceAgeFeatureMod(mod.Name), nil, nil
+	}
+	if isSpaceAgeFeatureMod(mod.Name) {
+		return false, nil, fmt.Errorf("Space Age feature %s is not available in this Factorio installation", mod.Name)
+	}
+	if err := installPortal(staged, mod); err != nil {
+		reason, canSkip := saveModImportSkipReason(err)
+		if !canSkip {
+			return false, nil, fmt.Errorf("stage mod %s %s: %w", mod.Name, mod.Version.String(), err)
+		}
+		log.Printf("Skipping save-required mod %s %s during import: %v", mod.Name, mod.Version.String(), err)
+		return false, &SaveModImportSkipped{Name: mod.Name, Version: mod.Version, Reason: reason}, nil
+	}
+	return false, nil, nil
 }
 
 func saveModImportSkipReason(err error) (string, bool) {
@@ -269,4 +340,25 @@ func installSaveModFromPortal(mods *Mods, requested Mod) error {
 		return nil
 	}
 	return fmt.Errorf("%w: version %s is not listed on the Mod Portal", errModPortalReleaseUnavailable, requested.Version.String())
+}
+
+func copyFile(src, dst string, mode os.FileMode) (int64, error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return 0, err
+	}
+	if info.Size() > maximumModPortalArchiveBytes {
+		return 0, fmt.Errorf("file %s exceeds maximum size", src)
+	}
+	source, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer source.Close()
+	destination, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return 0, err
+	}
+	defer destination.Close()
+	return io.Copy(destination, source)
 }

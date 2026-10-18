@@ -106,3 +106,37 @@ func setBuiltInFeatureMods(modDirectory string, enabled []string) error {
 	}
 	return modList.SetModsEnabled(states)
 }
+
+// SetDLCMods enables or disables individual DLC feature mods by name.
+// Only DLC mods known to spaceAgeFeatureMods are accepted.
+func SetDLCMods(states map[string]bool) (GameModeStatus, error) {
+	for name := range states {
+		valid := false
+		for _, known := range spaceAgeFeatureMods {
+			if known == name {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return GameModeStatus{}, fmt.Errorf("unknown DLC mod %q", name)
+		}
+	}
+	config := bootstrap.GetConfig()
+	if err := setBuiltInFeatureMods(config.FactorioModsDir, nil); err != nil {
+		return GameModeStatus{}, err
+	}
+	// Now apply the requested states on top of the base-game defaults
+	enabledMods := []string{}
+	for name, isEnabled := range states {
+		if isEnabled {
+			enabledMods = append(enabledMods, name)
+		}
+	}
+	if len(enabledMods) > 0 {
+		if err := setBuiltInFeatureMods(config.FactorioModsDir, enabledMods); err != nil {
+			return GameModeStatus{}, err
+		}
+	}
+	return GetGameModeStatus()
+}

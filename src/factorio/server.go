@@ -49,6 +49,7 @@ type ServerStatus struct {
 	Port           int     `json:"port"`
 	Running        bool    `json:"running"`
 	Stopping       bool    `json:"stopping"`
+	RconConnected  bool    `json:"rcon_connected"`
 	Version        Version `json:"fac_version"`
 	BaseModVersion string  `json:"base_mod_version"`
 }
@@ -91,6 +92,7 @@ func (server *Server) SetRunning(newState bool) {
 	stateMutex.Unlock()
 	if stopped {
 		stopCheckpointMonitor()
+		stopRconWatchdog()
 	}
 	server.broadcastStatus()
 }
@@ -167,6 +169,7 @@ func (server *Server) Snapshot() ServerStatus {
 		Port:           server.Port,
 		Running:        server.Running,
 		Stopping:       server.Stopping,
+		RconConnected:  GetRconWatchdogConnected(),
 		Version:        server.Version,
 		BaseModVersion: server.BaseModVersion,
 	}

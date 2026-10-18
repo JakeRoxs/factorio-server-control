@@ -57,9 +57,10 @@ export default {
         });
         return response.data;
     },
-    importMods: async save => {
+    importMods: async (save, mode = "match") => {
         const response = await client.post("/api/saves/mods/import", {
-            saveFile: save
+            saveFile: save,
+            mode: mode
         });
         return response.data;
     },

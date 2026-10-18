@@ -22,6 +22,10 @@ export default {
         const response = await client.post('/api/server/game-mode', {mode});
         return response.data;
     },
+    setDLCMods: async (mods) => {
+        const response = await client.post('/api/server/dlc-mods', {mods});
+        return response.data;
+    },
     status: async () => {
         const response = await client.get('/api/server/status');
         return response.data;
