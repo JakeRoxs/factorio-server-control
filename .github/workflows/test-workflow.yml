@@ -67,7 +67,7 @@ jobs:
       - if: contains(matrix.os, 'ubuntu')
         working-directory: src
         run: |
-          go version | grep -F 'go1.26.9 '
+          go version | grep -F 'go1.26.10 '
           go test ./... -short -count=1
           go test ./factorio ./api -race -short -run 'Test(ModPackMerge|MergeModPack|ModPortalPreferences|ModPortalOptionalDefaults)' -count=1
           go test ./lockfile ./api/websocket -race -short -count=1
@@ -97,11 +97,16 @@ jobs:
             --mount type=bind,source="$PWD/src",target=/workspace,readonly \
             --mount type=tmpfs,destination=/opt/factorio \
             --mount type=tmpfs,destination=/opt/factorio/mods \
+            --mount type=tmpfs,destination=/opt/factorio/config \
+            --mount type=tmpfs,destination=/opt/fsm-test-managed \
+            --mount type=tmpfs,destination=/opt/fsm-test-managed/servers/2/config \
             --env FSM_TEST_MOUNTED_FACTORIO_DIR=/opt/factorio \
             --env FSM_TEST_MOUNTED_MODS_DIR=/opt/factorio/mods \
+            --env FSM_TEST_MOUNTED_CONFIG_DIR=/opt/factorio/config \
+            --env FSM_TEST_MOUNTED_MANAGER_DIR=/opt/fsm-test-managed \
             --workdir /workspace \
-            golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c \
-            go test ./factorio -run '^(TestDeleteAllModsAtMountedDestination|TestReplaceModsFromSaveAtMountedDestination|TestReplaceReleaseFilesAtMountedDestination|TestModStartupSettingsAtomicWriteAtMountedDestination|TestRestoreModBackupAtMountedDestination|TestMergeModPackAtMountedDestination)$' -count=1 -v
+            golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af \
+            go test ./factorio -run '^(TestDeleteAllModsAtMountedDestination|TestReplaceModsFromSaveAtMountedDestination|TestReplaceReleaseFilesAtMountedDestination|TestModStartupSettingsAtomicWriteAtMountedDestination|TestRestoreModBackupAtMountedDestination|TestMergeModPackAtMountedDestination|TestPresetAssignmentAtMountedDestination|TestManagedRuntimeConfigAtMountedDestination)$' -count=1 -v
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Build production container
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -127,11 +132,13 @@ jobs:
           ! grep -F 'Target="/opt/factorio"' templates/factorio-server-manager.xml
       - name: Accept split Unraid game-data mounts
         run: |
+          runtime_uid=$(docker run --rm --entrypoint id factorio-server-manager:ci -u)
+          runtime_gid=$(docker run --rm --entrypoint id factorio-server-manager:ci -g)
           docker run --rm \
-            --mount type=tmpfs,destination=/opt/fsm-data \
-            --mount type=tmpfs,destination=/opt/factorio/saves \
-            --mount type=tmpfs,destination=/opt/factorio/mods \
-            --mount type=tmpfs,destination=/opt/factorio/config \
+            --tmpfs /opt/fsm-data:uid="$runtime_uid",gid="$runtime_gid",mode=0700 \
+            --tmpfs /opt/factorio/saves:uid="$runtime_uid",gid="$runtime_gid",mode=0700 \
+            --tmpfs /opt/factorio/mods:uid="$runtime_uid",gid="$runtime_gid",mode=0700 \
+            --tmpfs /opt/factorio/config:uid="$runtime_uid",gid="$runtime_gid",mode=0700 \
             factorio-server-manager:ci true
       - name: Real-engine lifecycle with combined persistent storage
         run: python3 scripts/test-container-lifecycle.py --disposable --version 2.0.77 --mode factorio --layout combined

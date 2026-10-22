@@ -21,7 +21,7 @@ COPY ui ./ui
 RUN npm run build
 
 
-FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS backend-build
+FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS backend-build
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -43,7 +43,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 
 # glibc is required by the official Factorio headless server.
-# Runs as root intentionally: binds port 80 and manages /opt/factorio files.
+# Runs as non-root user "factorio" (uid 1000) for security.
 FROM ubuntu@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc AS runtime
 
 ARG VERSION
@@ -59,6 +59,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq tar xz-utils libmimalloc2.0 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN usermod -l factorio -d /opt/factorio -m ubuntu \
+    && usermod --shell /usr/sbin/nologin factorio
+
 WORKDIR /opt/fsm
 
 COPY --from=backend-build /out/factorio-server-manager ./factorio-server-manager
@@ -70,6 +73,9 @@ COPY docker/entrypoint.sh /opt/entrypoint.sh
 
 RUN sed -i 's/\r$//' /opt/entrypoint.sh \
     && chmod 0755 /opt/fsm/factorio-server-manager /opt/entrypoint.sh
+
+RUN mkdir -p /opt/fsm-data /opt/factorio/saves /opt/factorio/mods /opt/factorio/config \
+    && chown -R 1000:1000 /opt/fsm /opt/fsm-data /opt/factorio
 
 # Keep volatile metadata after filesystem layers so a new build date does not
 # invalidate the package-install cache.
@@ -85,10 +91,11 @@ LABEL org.opencontainers.image.title="Factorio Server Control" \
       io.factorio-server-control.ai-assisted-development="true" \
       io.factorio-server-control.ai-disclosure="/usr/share/doc/factorio-server-manager/AI-DISCLOSURE.md"
 
-EXPOSE 80/tcp 34197/udp
+EXPOSE 8080/tcp 34197/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=5 \
-    CMD curl --fail --silent --show-error http://127.0.0.1/ >/dev/null || exit 1
+    CMD curl --fail --silent --show-error http://127.0.0.1:8080/ >/dev/null || exit 1
 
 STOPSIGNAL SIGTERM
+USER factorio
 ENTRYPOINT ["/opt/entrypoint.sh"]

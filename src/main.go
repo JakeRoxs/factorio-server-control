@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -101,7 +102,28 @@ func shutdownHTTPServer(server *http.Server) {
 }
 
 func shutdownFactorioServer(timeout time.Duration) {
+	if manager := factorio.GetServerManager(); manager != nil {
+		servers := manager.ListServers()
+		processes := make([]shutdownProcess, 0, len(servers))
+		for _, server := range servers {
+			processes = append(processes, server)
+		}
+		shutdownFactorioProcesses(processes, timeout)
+		return
+	}
 	shutdownFactorioProcess(factorio.GetFactorioServer(), timeout)
+}
+
+func shutdownFactorioProcesses(servers []shutdownProcess, timeout time.Duration) {
+	var pending sync.WaitGroup
+	for _, server := range servers {
+		pending.Add(1)
+		go func() {
+			defer pending.Done()
+			shutdownFactorioProcess(server, timeout)
+		}()
+	}
+	pending.Wait()
 }
 
 type shutdownProcess interface {

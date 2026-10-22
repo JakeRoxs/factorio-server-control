@@ -3,6 +3,17 @@
 set -eu
 umask 077
 
+# Pre-flight checks
+if [ ! -w "/opt/fsm-data" ]; then
+    echo "ERROR: Cannot write to /opt/fsm-data — check permissions." >&2
+    exit 1
+fi
+
+if [ ! -w "/opt/factorio" ]; then
+    echo "ERROR: Cannot write to /opt/factorio — check permissions." >&2
+    exit 1
+fi
+
 require_persistent_mounts() {
     if [ "${FSM_REQUIRE_PERSISTENT_MOUNTS:-false}" != "true" ]; then
         return
@@ -191,6 +202,8 @@ write_runtime_state() {
 	mv /opt/fsm-data/.release-channel-new /opt/fsm-data/release-channel
 }
 
+FSM_PORT=${FSM_PORT:-8080}
+
 mkdir -p /opt/fsm-data/mod_packs /opt/factorio/saves /opt/factorio/mods /opt/factorio/config
 require_persistent_mounts
 
@@ -210,4 +223,4 @@ exec ./factorio-server-manager \
     --conf /opt/fsm-data/conf.json \
     --dir /opt/factorio \
     --mod-pack-dir /opt/fsm-data/mod_packs \
-    --port 80
+    --port "$FSM_PORT"

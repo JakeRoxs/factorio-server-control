@@ -190,7 +190,7 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
             >
                 <div className="ui-profile-switcher__icon"><FontAwesomeIcon icon={faLayerGroup}/></div>
                 <div className="ui-profile-switcher__copy">
-                    <span>Active profile</span>
+                    <span>Active profile (Server 1 snapshot)</span>
                     <strong>{isLoadingProfile && !activeProfile ? "Loading…" : activeProfile?.name || "Unavailable"}</strong>
                     {activeProfile && <small>{modeLabel(activeProfile.game_mode)} · {activeProfile.installed_version || "Unknown version"}</small>}
                 </div>
@@ -203,7 +203,7 @@ const Layout = ({handleLogout, serverStatus, refreshServerStatus, currentUser, s
                     {profileSwitchLocked && <HelpTip content={!canManage ? "Viewer accounts cannot switch profiles." : serverStatus?.known === false ? "Wait until the Factorio process status is known." : "Stop Factorio before switching profiles."} label="Why profile switching is disabled"/>}
                 </div>
                 <div className="ui-profile-menu__list">
-                    {(state?.profiles || []).map(profile => <button
+                    {(state?.profiles || []).filter(profile => !profile.preset_only).map(profile => <button
                         className={`ui-profile-menu__item${profile.active ? " is-active" : ""}`}
                         type="button"
                         key={profile.id}

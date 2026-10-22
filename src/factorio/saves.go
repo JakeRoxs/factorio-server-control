@@ -227,6 +227,49 @@ func CreateSave(filePath string) (string, error) {
 	return save.Name, nil
 }
 
+// ListSavesForDir lists save files in the specified directory.
+func ListSavesForDir(savesDir string) (saves []Save, err error) {
+	saves = []Save{}
+	entries, err := os.ReadDir(savesDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil, infoErr
+		}
+		if !isUsableSave(info) {
+			continue
+		}
+		saves = append(saves, Save{
+			info.Name(),
+			info.ModTime(),
+			info.Size(),
+		})
+	}
+	return saves, nil
+}
+
+// GetLatestSaveForDir returns the most recently modified save in the specified directory.
+func GetLatestSaveForDir(savesDir string) (save Save, err error) {
+	saves, err := ListSavesForDir(savesDir)
+	if err != nil {
+		return Save{}, err
+	}
+	if len(saves) == 0 {
+		return Save{}, errors.New("no usable save file found")
+	}
+
+	latest := saves[0]
+	for _, candidate := range saves[1:] {
+		if latest.LastMod.Before(candidate.LastMod) {
+			latest = candidate
+		}
+	}
+	return latest, nil
+}
+
 func GetLatestSave() (save Save, err error) {
 	saves, err := ListSaves()
 	if err != nil {

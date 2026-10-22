@@ -144,7 +144,7 @@ const App = () => {
                     <Route path="logs" element={<Logs/>}/>
                     <Route path="releases" element={<Releases serverStatus={serverStatus} refreshServerStatus={refreshServerStatus} canManage={canManage}/>}/>
                     <Route path="profiles" element={<Profiles serverStatus={serverStatus} refreshServerStatus={refreshServerStatus} canManage={canManage}/>}/>
-                    <Route path="servers" element={<Servers canManage={canManage}/>}/>
+                    <Route path="servers" element={<Servers canManage={canManage} serverStatus={serverStatus}/>}/>
                     <Route path="user-management" element={<UserManagement currentUser={currentUser} canManage={canManage}/>}/>
                 </Route>
             </Route>

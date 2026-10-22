@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 
 	"github.com/OpenFactorioServerManager/factorio-server-manager/factorio"
@@ -27,10 +30,15 @@ func ListServersHandler(w http.ResponseWriter, r *http.Request) {
 
 	manager := factorio.GetServerManager()
 	if manager == nil {
-		resp = []*factorio.Server{factorio.GetFactorioServer()}
+		resp = []factorio.Server{factorio.GetFactorioServer().ConfigurationSnapshot()}
 		return
 	}
-	resp = manager.ListServers()
+	servers := manager.ListServers()
+	snapshots := make([]factorio.Server, 0, len(servers))
+	for _, server := range servers {
+		snapshots = append(snapshots, server.ConfigurationSnapshot())
+	}
+	resp = snapshots
 }
 
 func PreviewNextServerHandler(w http.ResponseWriter, r *http.Request) {
@@ -57,16 +65,36 @@ func CreateServerHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() { WriteResponse(w, resp) }()
 	setJSON(w)
 
-	var data struct {
+	var data *struct {
 		Name      string `json:"name"`
 		Version   string `json:"version"`
 		BindIP    string `json:"bind_ip"`
 		Port      int    `json:"port"`
 		Autostart bool   `json:"autostart"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		resp = fmt.Sprintf("invalid server request: %s", err)
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&data)
+	if decodeErr == nil && data == nil {
+		decodeErr = errors.New("server request must be an object")
+	}
+	if decodeErr == nil {
+		if trailing := decoder.Decode(new(interface{})); trailing != io.EOF {
+			decodeErr = trailing
+			if decodeErr == nil {
+				decodeErr = errors.New("unexpected trailing server request data")
+			}
+		}
+	}
+	if decodeErr != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(decodeErr, &tooLarge) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		resp = "Invalid server request"
 		return
 	}
 
@@ -78,11 +106,20 @@ func CreateServerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	server, err := manager.CreateServer(data.Name, data.Version, data.BindIP, data.Port, data.Autostart)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		resp = fmt.Sprintf("error creating server: %s", err)
+		if errors.Is(err, factorio.ErrInvalidServerConfiguration) {
+			w.WriteHeader(http.StatusBadRequest)
+			resp = err.Error()
+		} else if errors.Is(err, factorio.ErrServerPortConflict) {
+			w.WriteHeader(http.StatusConflict)
+			resp = err.Error()
+		} else {
+			log.Printf("Managed server initialization failed: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			resp = "Server storage could not be initialized"
+		}
 		return
 	}
-	resp = server
+	resp = server.ConfigurationSnapshot()
 }
 
 func GetServerHandler(w http.ResponseWriter, r *http.Request) {
@@ -107,16 +144,7 @@ func GetServerHandler(w http.ResponseWriter, r *http.Request) {
 		resp = errServerNotFound
 		return
 	}
-	resp = server
-}
-
-type serverUpdateRequest struct {
-	Name             *string `json:"name"`
-	BindIP           *string `json:"bind_ip"`
-	Port             *int    `json:"port"`
-	Autostart        *bool   `json:"autostart"`
-	WatchdogInterval *int    `json:"watchdog_interval"`
-	UseMimalloc      *bool   `json:"use_mimalloc"`
+	resp = server.ConfigurationSnapshot()
 }
 
 func UpdateServerHandler(w http.ResponseWriter, r *http.Request) {
@@ -135,89 +163,55 @@ func UpdateServerHandler(w http.ResponseWriter, r *http.Request) {
 		resp = errManagerNotInit
 		return
 	}
-	server, ok := manager.GetServer(id)
-	if !ok {
-		w.WriteHeader(http.StatusNotFound)
-		resp = errServerNotFound
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var data *factorio.ServerConfigurationUpdate
+	err := decoder.Decode(&data)
+	if err == nil && data == nil {
+		err = errors.New("request must be a JSON object")
+	}
+	if err == nil {
+		err = decoder.Decode(new(interface{}))
+		if err == io.EOF {
+			err = nil
+		} else if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+	}
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		resp = "Invalid server configuration request"
 		return
 	}
-
-	var data serverUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		resp = fmt.Sprintf("invalid server request: %s", err)
-		return
-	}
-
-	if data.Port != nil {
-		if err := validatePortRange(*data.Port); err != nil {
+	server, err := manager.UpdateServerConfiguration(id, *data)
+	if err != nil {
+		switch {
+		case errors.Is(err, factorio.ErrServerMissing):
+			w.WriteHeader(http.StatusNotFound)
+			resp = errServerNotFound
+		case errors.Is(err, factorio.ErrServerActive):
+			w.WriteHeader(http.StatusLocked)
+			resp = "Only the name and next-start allocator preference can be changed while running. Stop the server before changing other configuration."
+		case errors.Is(err, factorio.ErrInvalidServerConfiguration):
 			w.WriteHeader(http.StatusBadRequest)
 			resp = err.Error()
-			return
-		}
-		if conflictID, found := findPortConflict(*data.Port, manager, server.ID); found {
+		case errors.Is(err, factorio.ErrServerPortConflict):
 			w.WriteHeader(http.StatusConflict)
-			resp = fmt.Sprintf("port %d is already used by server %s", *data.Port, conflictID)
-			return
+			resp = err.Error()
+		default:
+			log.Printf("Server configuration persistence failed: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			resp = "Server configuration could not be saved"
 		}
-	}
-	if data.WatchdogInterval != nil && *data.WatchdogInterval < 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		resp = "watchdog_interval must be >= 0"
-		return
-	}
-
-	applyServerUpdates(server, data)
-
-	if err := manager.UpdateServer(server); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		resp = err.Error()
 		return
 	}
 	resp = server
-}
-
-func validatePortRange(port int) error {
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535")
-	}
-	return nil
-}
-
-func findPortConflict(port int, manager *factorio.ServerManager, serverID string) (string, bool) {
-	for _, other := range manager.ListServers() {
-		if other.ID != serverID && other.Port == port {
-			return other.ID, true
-		}
-	}
-	return "", false
-}
-
-func applyServerUpdates(server *factorio.Server, data serverUpdateRequest) {
-	if data.Name != nil {
-		server.Name = *data.Name
-	}
-	if data.BindIP != nil {
-		if server.BindIP != *data.BindIP {
-			server.PendingRestart = server.Running
-		}
-		server.BindIP = *data.BindIP
-	}
-	if data.Port != nil {
-		if server.Port != *data.Port {
-			server.PendingRestart = server.Running
-		}
-		server.Port = *data.Port
-	}
-	if data.Autostart != nil {
-		server.Autostart = *data.Autostart
-	}
-	if data.WatchdogInterval != nil {
-		server.WatchdogInterval = *data.WatchdogInterval
-	}
-	if data.UseMimalloc != nil {
-		server.UseMimalloc = *data.UseMimalloc
-	}
 }
 
 func DeleteServerHandler(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +245,16 @@ func DeleteServerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := manager.DeleteServer(id); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		if errors.Is(err, factorio.ErrDefaultServer) {
+			w.WriteHeader(http.StatusConflict)
+		} else if errors.Is(err, factorio.ErrServerActive) {
+			w.WriteHeader(http.StatusLocked)
+		} else {
+			log.Printf("Managed server deletion could not be persisted: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			resp = "Server deletion could not be saved"
+			return
+		}
 		resp = err.Error()
 		return
 	}
@@ -265,13 +268,20 @@ func serverFromRequest(r *http.Request) (*factorio.Server, bool) {
 	}
 	manager := factorio.GetServerManager()
 	if manager == nil {
-		return factorio.GetFactorioServer(), true
+		if id == factorio.DefaultServerID {
+			return factorio.GetFactorioServer(), true
+		}
+		return nil, false
 	}
 	server, ok := manager.GetServer(id)
 	return server, ok
 }
 
-func SaveServerHandler(w http.ResponseWriter, r *http.Request) {
+func StartServerHandler(w http.ResponseWriter, r *http.Request) {
+	StartServer(w, r)
+}
+
+func StopServerHandler(w http.ResponseWriter, r *http.Request) {
 	var resp interface{}
 	defer func() { WriteResponse(w, resp) }()
 	setJSON(w)
@@ -282,17 +292,73 @@ func SaveServerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	manager := factorio.GetServerManager()
-	var server *factorio.Server
 	if manager == nil {
-		server = factorio.GetFactorioServer()
-	} else {
-		s, ok := manager.GetServer(id)
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			resp = errServerNotFound
-			return
+		w.WriteHeader(http.StatusInternalServerError)
+		resp = errManagerNotInit
+		return
+	}
+
+	if _, ok := manager.GetServer(id); !ok {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
+	err := manager.Stop(id)
+	if err != nil {
+		if errors.Is(err, factorio.ErrServerActive) {
+			w.WriteHeader(http.StatusConflict)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		server = s
+		resp = err.Error()
+		return
+	}
+
+	resp = true
+}
+
+func KillServerHandler(w http.ResponseWriter, r *http.Request) {
+	var resp interface{}
+	defer func() { WriteResponse(w, resp) }()
+	setJSON(w)
+
+	id := mux.Vars(r)["serverID"]
+	if id == "" {
+		id = factorio.DefaultServerID
+	}
+
+	manager := factorio.GetServerManager()
+	if manager == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp = errManagerNotInit
+		return
+	}
+
+	if _, ok := manager.GetServer(id); !ok {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
+	err := manager.Kill(id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp = err.Error()
+		return
+	}
+
+	resp = true
+}
+
+func SaveServerHandler(w http.ResponseWriter, r *http.Request) {
+	var resp interface{}
+	defer func() { WriteResponse(w, resp) }()
+	setJSON(w)
+
+	server, ok := serverFromRequest(r)
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
 	}
 
 	if !server.GetRunning() {

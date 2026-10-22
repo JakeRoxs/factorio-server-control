@@ -1,8 +1,9 @@
 package api
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/OpenFactorioServerManager/factorio-server-manager/factorio"
@@ -42,19 +43,26 @@ func CreateServerProfileHandler(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		resp = fmt.Sprintf("invalid profile request: %s", err)
+	if !decodeProfileRequest(w, r, &data) {
 		return
 	}
 
 	state, err := factorio.CreateServerProfile(id, data.Name, data.Description)
 	if err != nil {
-		switch err {
-		case factorio.ErrProfileNameConflict:
+		switch {
+		case errors.Is(err, factorio.ErrProfileNameConflict):
 			w.WriteHeader(http.StatusConflict)
+		case errors.Is(err, factorio.ErrServerMissing):
+			w.WriteHeader(http.StatusNotFound)
+		case errors.Is(err, factorio.ErrProfileServerActive):
+			w.WriteHeader(http.StatusLocked)
+		case errors.Is(err, factorio.ErrInvalidProfile):
+			w.WriteHeader(http.StatusBadRequest)
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("Server preset capture failed: %v", err)
+			resp = "The preset could not be captured"
+			return
 		}
 		resp = fmt.Sprintf("error creating profile: %s", err)
 		return
@@ -71,19 +79,26 @@ func CreateGlobalProfileHandler(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		resp = fmt.Sprintf("invalid profile request: %s", err)
+	if !decodeProfileRequest(w, r, &data) {
 		return
 	}
 
 	state, err := factorio.CreateGlobalProfile(data.Name, data.Description)
 	if err != nil {
-		switch err {
-		case factorio.ErrProfileNameConflict:
+		switch {
+		case errors.Is(err, factorio.ErrProfileNameConflict):
 			w.WriteHeader(http.StatusConflict)
+		case errors.Is(err, factorio.ErrServerMissing):
+			w.WriteHeader(http.StatusNotFound)
+		case errors.Is(err, factorio.ErrProfileServerActive):
+			w.WriteHeader(http.StatusLocked)
+		case errors.Is(err, factorio.ErrInvalidProfile):
+			w.WriteHeader(http.StatusBadRequest)
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("Default-server preset capture failed: %v", err)
+			resp = "The preset could not be captured"
+			return
 		}
 		resp = fmt.Sprintf("error creating global profile: %s", err)
 		return
@@ -104,11 +119,18 @@ func ApplyGlobalProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	state, err := factorio.ApplyGlobalProfileToServer(serverID, profileID)
 	if err != nil {
-		switch err {
-		case factorio.ErrProfileNotFound:
+		switch {
+		case errors.Is(err, factorio.ErrProfileNotFound), errors.Is(err, factorio.ErrServerMissing):
 			w.WriteHeader(http.StatusNotFound)
+		case errors.Is(err, factorio.ErrProfileServerActive):
+			w.WriteHeader(http.StatusLocked)
+		case errors.Is(err, factorio.ErrInvalidProfile):
+			w.WriteHeader(http.StatusBadRequest)
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("Global profile application failed: %v", err)
+			resp = "Unable to apply the selected profile"
+			return
 		}
 		resp = fmt.Sprintf("error applying global profile: %s", err)
 		return
@@ -129,11 +151,18 @@ func AssignServerProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := factorio.AssignProfileToServer(serverID, profileID)
 	if err != nil {
-		switch err {
-		case factorio.ErrProfileNotFound:
+		switch {
+		case errors.Is(err, factorio.ErrProfileNotFound), errors.Is(err, factorio.ErrServerMissing):
 			w.WriteHeader(http.StatusNotFound)
+		case errors.Is(err, factorio.ErrProfileServerActive):
+			w.WriteHeader(http.StatusLocked)
+		case errors.Is(err, factorio.ErrInvalidProfile):
+			w.WriteHeader(http.StatusBadRequest)
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("Server profile assignment failed: %v", err)
+			resp = "Unable to assign the selected profile"
+			return
 		}
 		resp = fmt.Sprintf("error assigning profile: %s", err)
 		return

@@ -608,8 +608,8 @@ func waitForCheckpointRCONReady(server *Server, timeout time.Duration) error {
 }
 
 func runCheckpointRCONCommand(command string) (string, error) {
-	config := bootstrap.GetConfig()
-	console, err := rcon.Dial(localRCONAddress(), config.FactorioRconPass)
+	address, password := GetFactorioServer().rconConnectionSettings()
+	console, err := rcon.Dial(address, password)
 	if err != nil {
 		return "", err
 	}

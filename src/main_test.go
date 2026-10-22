@@ -32,6 +32,48 @@ func TestShutdownSkipsStoppedRuntime(t *testing.T) {
 	}
 }
 
+func TestShutdownRequestsEveryRuntimeBeforeWaiting(t *testing.T) {
+	first := &shutdownFixture{}
+	second := &shutdownFixture{}
+	first.busy.Store(true)
+	second.busy.Store(true)
+	requested := make(chan struct{}, 2)
+	finish := make(chan struct{})
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		close(finish)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("shutdown workers did not finish after runtimes stopped")
+		}
+	})
+	for _, server := range []*shutdownFixture{first, second} {
+		server.onStop = func() error {
+			requested <- struct{}{}
+			<-finish
+			server.busy.Store(false)
+			return nil
+		}
+	}
+	go func() {
+		shutdownFactorioProcesses([]shutdownProcess{first, second}, 2*time.Second)
+		close(done)
+	}()
+	for range 2 {
+		select {
+		case <-requested:
+		case <-time.After(time.Second):
+			t.Fatal("a pending stop prevented another runtime from receiving shutdown")
+		}
+	}
+	select {
+	case <-done:
+		t.Fatal("shutdown returned while owned runtimes were still busy")
+	default:
+	}
+}
+
 func TestShutdownWaitsForPendingStartupAndStopCompletion(t *testing.T) {
 	server := &shutdownFixture{}
 	server.busy.Store(true)

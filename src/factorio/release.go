@@ -306,6 +306,11 @@ func GetReleaseStatus() (ReleaseStatus, error) {
 // InstallRelease downloads a supported official Linux headless release and updates the
 // Factorio program files. Existing saves, mods, and configuration remain untouched.
 func InstallRelease(target string) error {
+	profileDataGate.Lock()
+	defer profileDataGate.Unlock()
+	if err := ensureProfileServerStopped(); err != nil {
+		return err
+	}
 	status, err := GetGameModeStatus()
 	if err != nil {
 		return fmt.Errorf("read current game mode before release change: %w", err)
@@ -339,6 +344,9 @@ func InstallProfileRelease(installedVersion, releaseTarget string, requiredBuilt
 }
 
 func installRelease(downloadTarget, persistedTarget string, requiredBuiltIns []string) error {
+	if err := ensureProfileServerStopped(); err != nil {
+		return err
+	}
 	if !releaseInstallLock.TryLock() {
 		return errors.New("another Factorio release installation is already running")
 	}

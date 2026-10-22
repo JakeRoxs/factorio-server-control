@@ -24,37 +24,50 @@ import (
 )
 
 type Server struct {
-	Cmd            *exec.Cmd              `json:"-"`
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	VersionLabel   string                 `json:"version"`
-	VersionChannel string                 `json:"version_channel"`
-	Savefile       string                 `json:"savefile"`
-	Latency        int                    `json:"latency"`
-	BindIP         string                 `json:"bindip"`
-	Port           int                    `json:"port"`
-	RconPort       int                    `json:"rcon_port"`
-	RconPass       string                 `json:"-"`
-	Autostart      bool                   `json:"autostart"`
-	WatchdogInterval int                  `json:"watchdog_interval"`
-	LastWatchdogPing time.Time            `json:"-"`
-	PendingRestart bool                   `json:"pending_restart"`
-	ProfileID      string                 `json:"profile_id"`
-	UseMimalloc    bool                   `json:"use_mimalloc"`
-	Running        bool                   `json:"running"`
-	Stopping       bool                   `json:"stopping"`
-	Version        Version                `json:"fac_version"`
-	BaseModVersion string                 `json:"base_mod_version"`
-	StdOut         io.ReadCloser          `json:"-"`
-	StdErr         io.ReadCloser          `json:"-"`
-	StdIn          io.WriteCloser         `json:"-"`
-	Settings       map[string]interface{} `json:"-"`
-	Rcon           *rcon.RemoteConsole    `json:"-"`
-	LogChan        chan []string          `json:"-"`
-	RconConnected  bool                   `json:"rcon_connected"`
-	startupReady   bool
-	stopSignaled   bool
-	starting       bool
+	manager          *ServerManager
+	Cmd              *exec.Cmd              `json:"-"`
+	ID               string                 `json:"id"`
+	Name             string                 `json:"name"`
+	VersionLabel     string                 `json:"version"`
+	VersionChannel   string                 `json:"version_channel"`
+	Savefile         string                 `json:"savefile"`
+	Latency          int                    `json:"latency"`
+	BindIP           string                 `json:"bindip"`
+	Port             int                    `json:"port"`
+	RconPort         int                    `json:"rcon_port"`
+	RconPass         string                 `json:"-"`
+	Autostart        bool                   `json:"autostart"`
+	WatchdogInterval int                    `json:"watchdog_interval"`
+	LastWatchdogPing time.Time              `json:"-"`
+	PendingRestart   bool                   `json:"pending_restart"`
+	ProfileID        string                 `json:"profile_id"`
+	UseMimalloc      bool                   `json:"use_mimalloc"`
+	Running          bool                   `json:"running"`
+	Stopping         bool                   `json:"stopping"`
+	Version          Version                `json:"fac_version"`
+	BaseModVersion   string                 `json:"base_mod_version"`
+	StdOut           io.ReadCloser          `json:"-"`
+	StdErr           io.ReadCloser          `json:"-"`
+	StdIn            io.WriteCloser         `json:"-"`
+	Settings         map[string]interface{} `json:"-"`
+	Rcon             *rcon.RemoteConsole    `json:"-"`
+	LogChan          chan []string          `json:"-"`
+	RconConnected    bool                   `json:"rcon_connected"`
+	// Per-server storage paths (set during catalog rebuild or creation)
+	SavesDir     string `json:"saves_dir"`
+	ModsDir      string `json:"mods_dir"`
+	ConfigDir    string `json:"config_dir"`
+	startupReady bool
+	stopSignaled bool
+	starting     bool
+}
+
+// SettingsFile returns the path to this server's server-settings.json.
+func (server *Server) SettingsFile() string {
+	if server.ConfigDir != "" {
+		return filepath.Join(server.ConfigDir, "server-settings.json")
+	}
+	return bootstrap.GetConfig().SettingsFile
 }
 
 type ServerStatus struct {
@@ -87,11 +100,27 @@ type serverStartSnapshot struct {
 	Savefile     string
 	Version      Version
 	SettingsJSON []byte
+	UseMimalloc  bool
 }
 
 // serverBeforeProcessStart is a narrow test seam used to hold the claimed
 // starting state before any mutable process setup occurs.
 var serverBeforeProcessStart = func(serverStartSnapshot) {}
+
+// ConfigurationSnapshot gives API serialization a value copy rather than a
+// mutable runtime pointer. Process handles and private settings are not encoded.
+func (server *Server) ConfigurationSnapshot() Server {
+	stateMutex.RLock()
+	defer stateMutex.RUnlock()
+	return *server
+}
+
+// claimStarting atomically transitions this server to the starting state.
+func (server *Server) claimStarting() {
+	stateMutex.Lock()
+	defer stateMutex.Unlock()
+	server.starting = true
+}
 
 func (server *Server) SetRunning(newState bool) {
 	stopped := false
@@ -150,8 +179,10 @@ func (server *Server) broadcastStatus() {
 		log.Printf("Error encoding server status: %s", err)
 		return
 	}
-	wsRoom := websocket.WebsocketHub.GetRoom("server_status")
-	wsRoom.Send(string(response))
+	if server.ID == "" || server.ID == DefaultServerID {
+		wsRoom := websocket.WebsocketHub.GetRoom("server_status")
+		wsRoom.Send(string(response))
+	}
 	if server.ID != "" {
 		perServerRoom := websocket.WebsocketHub.GetRoom("servers:" + server.ID + ":status")
 		perServerRoom.Send(string(response))
@@ -174,6 +205,33 @@ func (server *Server) IsStopping() bool {
 	stateMutex.RLock()
 	defer stateMutex.RUnlock()
 	return server.Stopping
+}
+
+func (server *Server) Kill() error {
+	stateMutex.RLock()
+	command, running := server.Cmd, server.Running
+	stateMutex.RUnlock()
+	if !running {
+		return server.Stop()
+	}
+	if command == nil || command.Process == nil {
+		return errors.New("Factorio process is not available")
+	}
+	if server.ID == "" || server.ID == DefaultServerID {
+		stopCheckpointMonitor()
+	}
+	server.SetStopping(true)
+	if err := command.Process.Kill(); err != nil {
+		server.SetStopping(false)
+		if errors.Is(err, os.ErrProcessDone) {
+			server.SetRunning(false)
+			server.closeRcon()
+			return nil
+		}
+		return err
+	}
+	server.closeRcon()
+	return nil
 }
 
 func (server *Server) isStartupReady() bool {
@@ -247,12 +305,13 @@ func (server *Server) setRconIfRunning(console *rcon.RemoteConsole) bool {
 	serverRCONCommandMutex.Lock()
 	defer serverRCONCommandMutex.Unlock()
 	stateMutex.Lock()
-	if !server.Running {
+	if !server.Running || console == nil {
 		stateMutex.Unlock()
 		return false
 	}
 	previous := server.Rcon
 	server.Rcon = console
+	server.RconConnected = true
 	stateMutex.Unlock()
 	if previous != nil {
 		_ = previous.Close()
@@ -280,27 +339,6 @@ func (server *Server) closeRcon() {
 	if err := console.Close(); err != nil {
 		log.Printf("Error closing rcon connection: %s", err)
 	}
-}
-
-func (server *Server) connectRC() error {
-	rconPort := server.RconPort
-	if rconPort == 0 {
-		rconPort = bootstrap.GetConfig().FactorioRconPort
-	}
-	rconPass := server.RconPass
-	if rconPass == "" {
-		rconPass = bootstrap.GetConfig().FactorioRconPass
-	}
-	rconAddr := fmt.Sprintf("127.0.0.1:%d", rconPort)
-	console, err := rcon.Dial(rconAddr, rconPass)
-	if err != nil {
-		return err
-	}
-	server.setRconIfRunning(console)
-	stateMutex.Lock()
-	server.RconConnected = true
-	stateMutex.Unlock()
-	return nil
 }
 
 func (server *Server) autostart() {
@@ -340,9 +378,15 @@ func (server *Server) SettingsSnapshot() map[string]interface{} {
 // Factorio, the separate admin list) before publishing the new in-memory map.
 // The lifecycle mutex closes the middleware check/use gap with server start.
 func (server *Server) UpdateServerSettings(updated map[string]interface{}) error {
+	if updated == nil {
+		return fmt.Errorf("%w: server settings must be an object", ErrInvalidServerConfiguration)
+	}
 	settingsData, err := json.MarshalIndent(updated, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal server settings: %w", err)
+	}
+	if len(settingsData) > backupMaxJSONBytes {
+		return fmt.Errorf("%w: server settings exceed the supported size", ErrInvalidServerConfiguration)
 	}
 
 	serverLifecycleMutex.Lock()
@@ -356,22 +400,36 @@ func (server *Server) UpdateServerSettings(updated map[string]interface{}) error
 	}
 
 	config := bootstrap.GetConfig()
-	previousSettings, settingsExisted, err := readOptionalFile(config.SettingsFile)
+	settingsPath, adminPath := server.SettingsFile(), config.FactorioAdminFile
+	mode := os.FileMode(0644)
+	if server.ConfigDir != "" {
+		adminPath = filepath.Join(server.ConfigDir, "server-adminlist.json")
+	} else if server.ID != "" && server.ID != DefaultServerID {
+		return fmt.Errorf("%w: managed configuration directory is unavailable", ErrInvalidServerConfiguration)
+	}
+	if server.ID != "" && server.ID != DefaultServerID {
+		mode = 0600
+	}
+	previousSettings, err := readBackupFile(settingsPath, backupMaxJSONBytes)
+	settingsExisted := err == nil
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	}
 	if err != nil {
 		return fmt.Errorf("read previous server settings: %w", err)
 	}
-	if err := writeFileAtomically(config.SettingsFile, settingsData, 0644); err != nil {
+	if err := writeFileAtomically(settingsPath, settingsData, mode); err != nil {
 		return fmt.Errorf("save server settings: %w", err)
 	}
 
 	if version.Greater(Version{0, 17, 0}) {
 		adminData, marshalErr := json.MarshalIndent(updated["admins"], "", "  ")
 		if marshalErr != nil {
-			rollbackErr := restoreOptionalFile(config.SettingsFile, previousSettings, settingsExisted, 0644)
+			rollbackErr := restoreOptionalFile(settingsPath, previousSettings, settingsExisted, mode)
 			return errors.Join(fmt.Errorf("marshal admin list: %w", marshalErr), rollbackErr)
 		}
-		if writeErr := writeFileAtomically(config.FactorioAdminFile, adminData, 0644); writeErr != nil {
-			rollbackErr := restoreOptionalFile(config.SettingsFile, previousSettings, settingsExisted, 0644)
+		if writeErr := writeFileAtomically(adminPath, adminData, mode); writeErr != nil {
+			rollbackErr := restoreOptionalFile(settingsPath, previousSettings, settingsExisted, mode)
 			return errors.Join(fmt.Errorf("save admin list: %w", writeErr), rollbackErr)
 		}
 	}
@@ -446,10 +504,19 @@ func RefreshFactorioVersion() error {
 	if err != nil {
 		return err
 	}
+	var servers []*Server
+	if manager := GetServerManager(); manager != nil {
+		servers = manager.ListServers()
+	}
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 	instantiated.Version = version
 	instantiated.BaseModVersion = baseModVersion
+	for _, server := range servers {
+		if !server.Running && !server.starting && !server.Stopping {
+			server.Version, server.BaseModVersion = version, baseModVersion
+		}
+	}
 	return nil
 }
 
@@ -668,6 +735,17 @@ func (server *Server) start(request *requestedServerStart) (<-chan error, error)
 	// started (or startup has failed). Profile activation needs the write side.
 	profileDataGate.RLock()
 	serverLifecycleMutex.Lock()
+	managed := server.ID != "" && server.ID != DefaultServerID
+	owner := server.manager
+	if managed && owner != nil {
+		owner.mu.Lock()
+		defer owner.mu.Unlock()
+		if owner.servers[server.ID] != server {
+			serverLifecycleMutex.Unlock()
+			profileDataGate.RUnlock()
+			return nil, ErrServerMissing
+		}
+	}
 
 	stateMutex.RLock()
 	busy := server.Running || server.Stopping || server.starting
@@ -693,7 +771,39 @@ func (server *Server) start(request *requestedServerStart) (<-chan error, error)
 		profileDataGate.RUnlock()
 		return nil, ErrServerActive
 	}
+	if runtime.GOOS == "windows" {
+		// The legacy Windows stop path broadcasts to the shared console.
+		// Until console groups are isolated, never admit a second live child.
+		peerBusy := server != &instantiated && (instantiated.Running || instantiated.starting || instantiated.Stopping)
+		peers := owner
+		if peers == nil {
+			peers = GetServerManager()
+		}
+		if peers != nil {
+			for _, other := range peers.servers {
+				peerBusy = peerBusy || other != server && (other.Running || other.starting || other.Stopping)
+			}
+		}
+		if peerBusy {
+			stateMutex.Unlock()
+			worldGenerationLock.Unlock()
+			serverLifecycleMutex.Unlock()
+			profileDataGate.RUnlock()
+			return nil, fmt.Errorf("%w: concurrent Windows runtimes require isolated console process control", ErrInvalidServerConfiguration)
+		}
+	}
 
+	version := server.Version
+	if server.ID != "" && server.ID != DefaultServerID {
+		version = instantiated.Version
+		if err := validateManagedVersionTarget(version, server.VersionLabel); err != nil {
+			stateMutex.Unlock()
+			worldGenerationLock.Unlock()
+			serverLifecycleMutex.Unlock()
+			profileDataGate.RUnlock()
+			return nil, err
+		}
+	}
 	bindIP := server.BindIP
 	port := server.Port
 	savefile := server.Savefile
@@ -701,6 +811,21 @@ func (server *Server) start(request *requestedServerStart) (<-chan error, error)
 		bindIP = request.BindIP
 		port = request.Port
 		savefile = request.Savefile
+		if server.ID != "" && server.ID != DefaultServerID {
+			if bindIP == "" {
+				bindIP = server.BindIP
+			}
+			if port == 0 {
+				port = server.Port
+			}
+			if bindIP != server.BindIP || port != server.Port {
+				stateMutex.Unlock()
+				worldGenerationLock.Unlock()
+				serverLifecycleMutex.Unlock()
+				profileDataGate.RUnlock()
+				return nil, fmt.Errorf("%w: change the stopped server's network configuration before starting on a different binding", ErrInvalidServerConfiguration)
+			}
+		}
 	}
 	if bindIP == "" {
 		bindIP = "0.0.0.0"
@@ -719,10 +844,61 @@ func (server *Server) start(request *requestedServerStart) (<-chan error, error)
 		profileDataGate.RUnlock()
 		return nil, fmt.Errorf("marshal Factorio server settings: %w", err)
 	}
+	if managed {
+		validSave := false
+		if strings.HasPrefix(savefile, "Load Latest") {
+			savefile = "Load Latest"
+			_, latestErr := GetLatestSaveForDir(server.SavesDir)
+			validSave = latestErr == nil
+		} else if ValidatePathElement(savefile) == nil {
+			info, statErr := os.Lstat(filepath.Join(server.SavesDir, savefile))
+			validSave = statErr == nil && isUsableSave(info)
+		}
+		if !validSave {
+			stateMutex.Unlock()
+			worldGenerationLock.Unlock()
+			serverLifecycleMutex.Unlock()
+			profileDataGate.RUnlock()
+			return nil, fmt.Errorf("%w: select a usable save owned by this server before starting", ErrInvalidServerConfiguration)
+		}
+		if owner != nil {
+			index := -1
+			for i := range owner.catalog.Servers {
+				if owner.catalog.Servers[i].ID == server.ID {
+					index = i
+					break
+				}
+			}
+			if index < 0 {
+				stateMutex.Unlock()
+				worldGenerationLock.Unlock()
+				serverLifecycleMutex.Unlock()
+				profileDataGate.RUnlock()
+				return nil, ErrServerMissing
+			}
+			previous := owner.catalog.Servers[index].Savefile
+			if previous != savefile {
+				owner.catalog.Servers[index].Savefile = savefile
+				if err := owner.saveCatalogLocked(); err != nil {
+					owner.catalog.Servers[index].Savefile = previous
+					stateMutex.Unlock()
+					worldGenerationLock.Unlock()
+					serverLifecycleMutex.Unlock()
+					profileDataGate.RUnlock()
+					log.Printf("Cannot persist selected save for server %s: %v", server.ID, err)
+					return nil, errors.New("selected save could not be stored")
+				}
+			}
+		}
+	}
 
 	server.BindIP = bindIP
 	server.Port = port
 	server.Savefile = savefile
+	server.Version = version
+	if server.ID != "" && server.ID != DefaultServerID {
+		server.BaseModVersion = instantiated.BaseModVersion
+	}
 	server.Stopping = false
 	server.startupReady = false
 	server.stopSignaled = false
@@ -731,8 +907,9 @@ func (server *Server) start(request *requestedServerStart) (<-chan error, error)
 		BindIP:       bindIP,
 		Port:         port,
 		Savefile:     savefile,
-		Version:      server.Version,
+		Version:      version,
 		SettingsJSON: append([]byte(nil), settingsData...),
+		UseMimalloc:  server.UseMimalloc,
 	}
 	stateMutex.Unlock()
 	serverLifecycleMutex.Unlock()
@@ -770,11 +947,12 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 	}()
 
 	config := bootstrap.GetConfig()
-	if err := writeFileAtomically(config.SettingsFile, snapshot.SettingsJSON, 0644); err != nil {
+	settingsFile := server.SettingsFile()
+	if err := writeFileAtomically(settingsFile, snapshot.SettingsJSON, 0644); err != nil {
 		return fmt.Errorf("save startup server settings: %w", err)
 	}
 
-	saves, err := ListSaves()
+	saves, err := ListSavesForDir(server.SavesDir)
 	if err != nil {
 		return fmt.Errorf("list saves before start: %w", err)
 	}
@@ -793,27 +971,37 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 	args = append(args,
 		"--bind", snapshot.BindIP,
 		"--port", strconv.Itoa(snapshot.Port),
-		"--server-settings", config.SettingsFile,
-		"--rcon-bind", "127.0.0.1:"+strconv.Itoa(config.FactorioRconPort),
-		"--rcon-password", config.FactorioRconPass)
+		"--server-settings", settingsFile,
+		"--rcon-bind", "127.0.0.1:"+strconv.Itoa(server.RconPort),
+		"--rcon-password", server.RconPass)
+	if server.ModsDir != "" {
+		args = append(args, "--mod-directory", server.ModsDir)
+	}
+	if server.ID != "" && server.ID != DefaultServerID {
+		args = append(args, "--config", filepath.Join(server.ConfigDir, "config.ini"))
+	}
 	if snapshot.Version.Greater(Version{0, 17, 0}) {
-		args = append(args, "--server-adminlist", config.FactorioAdminFile)
+		args = append(args, "--server-adminlist", filepath.Join(server.ConfigDir, "server-adminlist.json"))
 	}
 
 	if strings.HasPrefix(snapshot.Savefile, "Load Latest") {
-		latestSave, latestErr := GetLatestSave()
+		latestSave, latestErr := GetLatestSaveForDir(server.SavesDir)
 		if latestErr != nil {
 			return fmt.Errorf("find latest save: %w", latestErr)
 		}
-		args = append(args, "--start-server", filepath.Join(config.FactorioSavesDir, latestSave.Name))
+		args = append(args, "--start-server", filepath.Join(server.SavesDir, latestSave.Name))
 	} else {
 		if err := ValidatePathElement(snapshot.Savefile); err != nil {
 			return fmt.Errorf("invalid save name: %w", err)
 		}
-		args = append(args, "--start-server", filepath.Join(config.FactorioSavesDir, snapshot.Savefile))
+		args = append(args, "--start-server", filepath.Join(server.SavesDir, snapshot.Savefile))
 	}
 	if config.ChatLogFile != "" {
-		args = append(args, "--console-log", config.ChatLogFile)
+		chatLog := config.ChatLogFile
+		if server.ID != "" && server.ID != DefaultServerID {
+			chatLog = filepath.Join(filepath.Dir(server.ConfigDir), "chat.log")
+		}
+		args = append(args, "--console-log", chatLog)
 	}
 
 	var command *exec.Cmd
@@ -826,7 +1014,7 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 	}
 
 	// Inject mimalloc memory allocator via LD_PRELOAD if enabled for this server
-	if server.UseMimalloc && runtime.GOOS == "linux" {
+	if snapshot.UseMimalloc && runtime.GOOS == "linux" {
 		mimallocPath := os.Getenv("FSM_MIMALLOC_PATH")
 		if mimallocPath == "" {
 			// Try common locations for the mimalloc shared library
@@ -907,7 +1095,11 @@ func (server *Server) parseRunningCommand(std io.ReadCloser) (err error) {
 
 		// Internal localhost RCON probes are implementation noise, not useful game output.
 		if !isManagerRCONConnectionLog(text) {
-			wsRoom := websocket.WebsocketHub.GetRoom("gamelog")
+			roomName := "gamelog"
+			if server.ID != "" && server.ID != DefaultServerID {
+				roomName = "servers:" + server.ID + ":gamelog"
+			}
+			wsRoom := websocket.WebsocketHub.GetRoom(roomName)
 			go wsRoom.Send(text)
 		}
 
@@ -928,7 +1120,7 @@ func (server *Server) parseRunningCommand(std io.ReadCloser) (err error) {
 				// log line for opened rcon connection
 				if strings.Contains(text, rconLog) {
 					log.Printf("Rcon running on Factorio Server")
-					err = connectRC()
+					err = server.connectRC()
 					if err != nil {
 						log.Printf("Error: %s", err)
 					}
@@ -948,6 +1140,9 @@ func (server *Server) parseRunningCommand(std io.ReadCloser) (err error) {
 func (server *Server) writeLog(logline string) error {
 	config := bootstrap.GetConfig()
 	logfileName := config.ConsoleLogFile
+	if server.ID != "" && server.ID != DefaultServerID {
+		logfileName = filepath.Join(filepath.Dir(server.ConfigDir), "console.log")
+	}
 	file, err := os.OpenFile(logfileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		log.Printf("Cannot open logfile %s for appending Factorio Server output: %s", logfileName, err)

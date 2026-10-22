@@ -77,6 +77,9 @@ func TestPendingStartupStopClaimsOnlyAfterRCONIsPublished(t *testing.T) {
 	server := &Server{Running: true, Stopping: true}
 	console := &rcon.RemoteConsole{}
 	pendingStop, installed := server.installStartupRCON(console)
+	if !server.Snapshot().RconConnected {
+		t.Fatal("publishing a usable RCON console did not publish connected state")
+	}
 	if !installed || !pendingStop {
 		t.Fatalf("pending stop was not claimed after RCON installation: installed=%v pending=%v", installed, pendingStop)
 	}
@@ -92,7 +95,7 @@ func TestPendingStartupStopClaimsOnlyAfterRCONIsPublished(t *testing.T) {
 }
 
 func TestParallelStartKeepsWinningRequestSnapshotAndRejectsSecondClaim(t *testing.T) {
-	server := &Server{Settings: map[string]interface{}{"name": "atomic-start"}, Version: Version{2, 1, 14}}
+	server := &Server{Settings: map[string]interface{}{"name": "atomic-start"}, Version: Version{2, 1, 14}, UseMimalloc: true}
 	claimed := make(chan serverStartSnapshot, 1)
 	release := make(chan struct{})
 	originalHook := serverBeforeProcessStart
@@ -113,7 +116,7 @@ func TestParallelStartKeepsWinningRequestSnapshotAndRejectsSecondClaim(t *testin
 	case <-time.After(2 * time.Second):
 		t.Fatal("first start did not reach the startup barrier")
 	}
-	if firstSnapshot.BindIP != "127.0.0.1" || firstSnapshot.Port != 34197 || firstSnapshot.Savefile != "first.zip" {
+	if firstSnapshot.BindIP != "127.0.0.1" || firstSnapshot.Port != 34197 || firstSnapshot.Savefile != "first.zip" || !firstSnapshot.UseMimalloc {
 		t.Fatalf("first request was not captured intact: %#v", firstSnapshot)
 	}
 

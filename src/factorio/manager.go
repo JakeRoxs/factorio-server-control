@@ -2,8 +2,10 @@ package factorio
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,21 +19,24 @@ import (
 
 const DefaultServerID = "1"
 
+var ErrDefaultServer = errors.New("the default server cannot be deleted")
+
 type ServerRecord struct {
-	ID             string        `json:"id"`
-	Name           string        `json:"name"`
-	VersionLabel   string        `json:"version"`
-	VersionChannel string        `json:"version_channel"`
-	Savefile       string        `json:"savefile"`
-	BindIP         string        `json:"bind_ip"`
-	Port           int           `json:"port"`
-	RconPort       int           `json:"rcon_port"`
-	RconPass       string        `json:"rcon_pass"`
-	Autostart      bool          `json:"autostart"`
-	WatchdogInterval int         `json:"watchdog_interval"`
-	LastWatchdogPing time.Time   `json:"-"`
-	PendingRestart bool          `json:"pending_restart"`
-	ProfileID      string        `json:"profile_id"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	VersionLabel     string    `json:"version"`
+	VersionChannel   string    `json:"version_channel"`
+	Savefile         string    `json:"savefile"`
+	BindIP           string    `json:"bind_ip"`
+	Port             int       `json:"port"`
+	RconPort         int       `json:"rcon_port"`
+	RconPass         string    `json:"rcon_pass"`
+	Autostart        bool      `json:"autostart"`
+	WatchdogInterval int       `json:"watchdog_interval"`
+	LastWatchdogPing time.Time `json:"-"`
+	PendingRestart   bool      `json:"pending_restart"`
+	ProfileID        string    `json:"profile_id"`
+	UseMimalloc      bool      `json:"use_mimalloc"`
 }
 
 type ServerCatalog struct {
@@ -47,8 +52,20 @@ type ServerManager struct {
 }
 
 var serverManager *ServerManager
+var serverManagerMu sync.RWMutex
 
 func InitServerManager() (*ServerManager, error) {
+	profileDataGate.RLock()
+	defer profileDataGate.RUnlock()
+	serverLifecycleMutex.Lock()
+	defer serverLifecycleMutex.Unlock()
+	if current := GetServerManager(); current != nil {
+		for _, server := range current.ListServers() {
+			if server.IsBusy() {
+				return nil, ErrServerActive
+			}
+		}
+	}
 	config := bootstrap.GetConfig()
 	manager := &ServerManager{
 		catalogFile: filepath.Join(filepath.Dir(config.ConfFile), "servers.json"),
@@ -66,58 +83,126 @@ func InitServerManager() (*ServerManager, error) {
 	if err := manager.loadCatalog(); err != nil {
 		return nil, err
 	}
-	if err := manager.rebuildServers(); err != nil {
+	if err := manager.rebuildServersLocked(); err != nil {
 		return nil, err
 	}
 
+	serverManagerMu.Lock()
 	serverManager = manager
-	SetFactorioServer(*manager.DefaultServer())
+	serverManagerMu.Unlock()
 	go manager.rconWatchdog()
 	return manager, nil
 }
 
 func GetServerManager() *ServerManager {
+	serverManagerMu.RLock()
+	defer serverManagerMu.RUnlock()
 	return serverManager
 }
 
 func (m *ServerManager) loadCatalog() error {
-	raw, err := os.ReadFile(m.catalogFile)
-	if err != nil {
+	var candidate ServerCatalog
+	if err := readBackupJSON(m.catalogFile, &candidate); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, &m.catalog); err != nil {
-		return err
+	if candidate.Version == 0 {
+		candidate.Version = 1
 	}
-	if m.catalog.Version == 0 {
-		m.catalog.Version = 1
+	if candidate.Version != 1 {
+		return errors.New("unsupported server catalog version")
+	}
+	seen := make(map[string]bool)
+	for _, record := range candidate.Servers {
+		if ValidatePathElement(record.ID) != nil || seen[record.ID] {
+			return errors.New("server catalog contains an invalid or duplicate ID")
+		}
+		seen[record.ID] = true
+	}
+	previous := m.catalog
+	m.catalog = candidate
+	for _, record := range candidate.Servers {
+		if record.ID == DefaultServerID {
+			return nil
+		}
+	}
+	// Legacy controls always address this runtime, so it must have a catalog
+	// identity even if an earlier version allowed deleting its record.
+	m.catalog.Servers = append(m.catalog.Servers, legacyServerRecord(bootstrap.GetConfig()))
+	if err := m.saveCatalogLocked(); err != nil {
+		m.catalog = previous
+		return err
 	}
 	return nil
 }
 
 func (m *ServerManager) saveCatalogLocked() error {
-	tmp := m.catalogFile + ".tmp"
 	raw, err := json.MarshalIndent(m.catalog, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, raw, 0644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, m.catalogFile); err != nil {
-		_ = os.Remove(m.catalogFile)
-		return os.Rename(tmp, m.catalogFile)
-	}
-	return nil
+	return writeFileAtomically(m.catalogFile, raw, 0600)
 }
 
-func (m *ServerManager) rebuildServers() error {
+func (m *ServerManager) rebuildServers() (err error) {
+	profileDataGate.RLock()
+	defer profileDataGate.RUnlock()
+	serverLifecycleMutex.Lock()
+	defer serverLifecycleMutex.Unlock()
+	return m.rebuildServersLocked()
+}
+
+func (m *ServerManager) rebuildServersLocked() (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if GetFactorioServer().IsBusy() {
+		return ErrServerActive
+	}
+	for _, server := range m.servers {
+		if server.IsBusy() {
+			return ErrServerActive
+		}
+	}
+	installed := GetFactorioServer().ConfigurationSnapshot()
+	var swaps []*directoryEntrySwap
+	defer func() { finishManagedRuntimeSwaps(swaps, &err) }()
 
 	next := make(map[string]*Server)
+	var defaultRuntime *Server
 	for _, record := range m.catalog.Servers {
-		server := serverFromRecord(record)
+		server, recordErr := serverFromRecord(record, filepath.Dir(m.catalogFile))
+		if recordErr != nil || next[record.ID] != nil {
+			return errors.New("server catalog contains an invalid or duplicate ID")
+		}
+		server.manager = m
+		if record.ID == DefaultServerID {
+			// Initialization has already loaded the active profile. Catalog
+			// metadata must not replace its settings with an empty map.
+			server.Settings = GetFactorioServer().SettingsSnapshot()
+			server.Version = installed.Version
+			server.BaseModVersion = installed.BaseModVersion
+			if installed.Savefile != "" {
+				server.Savefile = installed.Savefile
+			}
+			defaultRuntime = server
+		} else {
+			prepared, prepareErr := prepareManagedRuntime(server, installed)
+			swaps = append(swaps, prepared...)
+			if prepareErr != nil {
+				return fmt.Errorf("initialize server %s: %w", record.ID, prepareErr)
+			}
+		}
 		next[record.ID] = server
+	}
+	for _, swap := range swaps {
+		if err := swap.activate(); err != nil {
+			return err
+		}
+	}
+	if defaultRuntime != nil {
+		stateMutex.Lock()
+		instantiated = *defaultRuntime
+		stateMutex.Unlock()
+		next[DefaultServerID] = GetFactorioServer()
 	}
 	m.servers = next
 	return nil
@@ -165,7 +250,11 @@ func (m *ServerManager) DefaultServer() *Server {
 	return &instantiated
 }
 
-func (m *ServerManager) CreateServer(name, versionLabel, bindIP string, port int, autostart bool) (*Server, error) {
+func (m *ServerManager) CreateServer(name, versionLabel, bindIP string, port int, autostart bool) (server *Server, err error) {
+	profileDataGate.RLock()
+	defer profileDataGate.RUnlock()
+	serverLifecycleMutex.Lock()
+	defer serverLifecycleMutex.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -179,25 +268,90 @@ func (m *ServerManager) CreateServer(name, versionLabel, bindIP string, port int
 	if port == 0 {
 		port = m.nextAvailableGamePortLocked()
 	}
+	name = strings.TrimSpace(name)
+	if len(name) > 128 || strings.IndexFunc(name, func(character rune) bool { return character < 32 || character == 127 }) >= 0 ||
+		net.ParseIP(bindIP) == nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("%w: invalid name, bind address or game port", ErrInvalidServerConfiguration)
+	}
+	for _, existing := range m.catalog.Servers {
+		if existing.Port == port {
+			return nil, ErrServerPortConflict
+		}
+	}
+	if versionLabel == "" {
+		versionLabel = "stable"
+	}
+	versionLabel, err = NormalizeReleaseTarget(versionLabel)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid version target", ErrInvalidServerConfiguration)
+	}
 
 	record := ServerRecord{
-		ID:             id,
-		Name:           name,
-		VersionLabel:   versionLabel,
-		VersionChannel: versionLabel,
-		BindIP:         bindIP,
-		Port:           port,
-		RconPort:       m.nextAvailableRconPortLocked(),
-		RconPass:       bootstrap.GenerateRandomPassword(),
-		Autostart:      autostart,
+		ID:               id,
+		Name:             name,
+		VersionLabel:     versionLabel,
+		VersionChannel:   versionLabel,
+		BindIP:           bindIP,
+		Port:             port,
+		RconPort:         m.nextAvailableRconPortLocked(),
+		RconPass:         bootstrap.GenerateRandomPassword(),
+		Autostart:        autostart,
 		WatchdogInterval: 30,
 	}
-	m.catalog.Servers = append(m.catalog.Servers, record)
-	if err := m.saveCatalogLocked(); err != nil {
+	server, err = serverFromRecord(record, filepath.Dir(m.catalogFile))
+	if err != nil {
 		return nil, err
 	}
-
-	server := serverFromRecord(record)
+	var swaps []*directoryEntrySwap
+	createdRoot := ""
+	defer func() {
+		finishManagedRuntimeSwaps(swaps, &err)
+		if err != nil && createdRoot != "" {
+			for _, swap := range swaps {
+				if swap.preserveRecovery {
+					return
+				}
+			}
+			_ = os.RemoveAll(createdRoot)
+		}
+	}()
+	if record.ID != DefaultServerID {
+		root := filepath.Dir(server.ConfigDir)
+		parent := filepath.Dir(root)
+		if err := os.Mkdir(parent, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		info, statErr := os.Lstat(parent)
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%w: server storage parent must be a real directory", ErrInvalidServerConfiguration)
+		}
+		if err := os.Mkdir(root, 0700); err != nil {
+			return nil, err
+		}
+		createdRoot = root
+		installed := GetFactorioServer().ConfigurationSnapshot()
+		if installed.Version != NilVersion {
+			if err := validateManagedVersionTarget(installed.Version, versionLabel); err != nil {
+				return nil, err
+			}
+		}
+		swaps, err = prepareManagedRuntime(server, installed)
+		if err != nil {
+			return nil, err
+		}
+		for _, swap := range swaps {
+			if err := swap.activate(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	previousCount := len(m.catalog.Servers)
+	m.catalog.Servers = append(m.catalog.Servers, record)
+	if err := m.saveCatalogLocked(); err != nil {
+		m.catalog.Servers = m.catalog.Servers[:previousCount]
+		return nil, err
+	}
+	server.manager = m
 	m.servers[id] = server
 	return server, nil
 }
@@ -219,6 +373,7 @@ func (m *ServerManager) UpdateServer(server *Server) error {
 			m.catalog.Servers[i].VersionLabel = server.VersionLabel
 			m.catalog.Servers[i].VersionChannel = server.VersionChannel
 			m.catalog.Servers[i].ProfileID = server.ProfileID
+			m.catalog.Servers[i].UseMimalloc = server.UseMimalloc
 			return m.saveCatalogLocked()
 		}
 	}
@@ -226,16 +381,73 @@ func (m *ServerManager) UpdateServer(server *Server) error {
 }
 
 func (m *ServerManager) DeleteServer(id string) error {
+	if id == DefaultServerID {
+		return ErrDefaultServer
+	}
+	serverLifecycleMutex.Lock()
+	defer serverLifecycleMutex.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if server, ok := m.servers[id]; ok && server.IsBusy() {
+		return ErrServerActive
+	}
 	for i := range m.catalog.Servers {
 		if m.catalog.Servers[i].ID == id {
-			m.catalog.Servers = append(m.catalog.Servers[:i], m.catalog.Servers[i+1:]...)
+			previous := m.catalog.Servers
+			next := append([]ServerRecord(nil), previous[:i]...)
+			next = append(next, previous[i+1:]...)
+			m.catalog.Servers = next
+			if err := m.saveCatalogLocked(); err != nil {
+				m.catalog.Servers = previous
+				return err
+			}
 			delete(m.servers, id)
-			return m.saveCatalogLocked()
+			return nil
 		}
 	}
 	return fmt.Errorf("server %s not found", id)
+}
+
+// Start routes a start request to the specified server instance.
+func (m *ServerManager) Start(id, bindIP string, port int, savefile string) (<-chan error, error) {
+	if id == "" {
+		id = DefaultServerID
+	}
+	m.mu.RLock()
+	server, ok := m.servers[id]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("server %s not found", id)
+	}
+	return server.Start(bindIP, port, savefile)
+}
+
+// Stop routes a stop request to the specified server instance.
+func (m *ServerManager) Stop(id string) error {
+	if id == "" {
+		id = DefaultServerID
+	}
+	m.mu.RLock()
+	server, ok := m.servers[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("server %s not found", id)
+	}
+	return server.Stop()
+}
+
+// Kill routes a kill request to the specified server instance.
+func (m *ServerManager) Kill(id string) error {
+	if id == "" {
+		id = DefaultServerID
+	}
+	m.mu.RLock()
+	server, ok := m.servers[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("server %s not found", id)
+	}
+	return server.Kill()
 }
 
 func (m *ServerManager) nextAvailableServerIDLocked() string {
@@ -247,6 +459,11 @@ func (m *ServerManager) nextAvailableServerIDLocked() string {
 	}
 	for i := 1; ; i++ {
 		if !used[i] {
+			if i != 1 {
+				if _, err := os.Lstat(filepath.Join(filepath.Dir(m.catalogFile), "servers", strconv.Itoa(i))); err == nil {
+					continue
+				}
+			}
 			return strconv.Itoa(i)
 		}
 	}
@@ -289,7 +506,30 @@ func (m *ServerManager) nextAvailableRconPortLocked() int {
 	return 45001
 }
 
-func serverFromRecord(record ServerRecord) *Server {
+func serverFromRecord(record ServerRecord, dataRoot string) (*Server, error) {
+	if err := ValidatePathElement(record.ID); err != nil {
+		return nil, errors.New("invalid server ID")
+	}
+	config := bootstrap.GetConfig()
+
+	// Default server uses the existing global paths for backward compatibility.
+	// Other servers get per-server directories under the data root.
+	var savesDir, modsDir, configDir string
+	if record.ID == DefaultServerID {
+		savesDir = config.FactorioSavesDir
+		modsDir = config.FactorioModsDir
+		configDir = config.FactorioConfigDir
+	} else {
+		root, err := filepath.Abs(dataRoot)
+		if err != nil {
+			return nil, err
+		}
+		base := filepath.Join(root, "servers", record.ID)
+		savesDir = filepath.Join(base, "saves")
+		modsDir = filepath.Join(base, "mods")
+		configDir = filepath.Join(base, "config")
+	}
+
 	return &Server{
 		ID:               record.ID,
 		Name:             record.Name,
@@ -305,48 +545,49 @@ func serverFromRecord(record ServerRecord) *Server {
 		LastWatchdogPing: record.LastWatchdogPing,
 		PendingRestart:   record.PendingRestart,
 		ProfileID:        record.ProfileID,
+		UseMimalloc:      record.UseMimalloc,
 		Settings:         make(map[string]interface{}),
-	}
+		SavesDir:         savesDir,
+		ModsDir:          modsDir,
+		ConfigDir:        configDir,
+	}, nil
 }
 
 func (m *ServerManager) migrateLegacy(config bootstrap.Config) error {
 	log.Printf("No managed server catalog found; migrating legacy server into ID %s", DefaultServerID)
-
-	versionLabel := "stable"
-	if server := GetFactorioServer(); server != nil && server.VersionLabel != "" {
-		versionLabel = server.VersionLabel
+	m.catalog = ServerCatalog{Version: 1, Servers: []ServerRecord{legacyServerRecord(config)}}
+	if err := m.saveCatalogLocked(); err != nil {
+		return err
 	}
+	log.Printf("Legacy migration complete")
+	return nil
+}
 
-	port := 34197
+func legacyServerRecord(config bootstrap.Config) ServerRecord {
+	server := GetFactorioServer()
+	versionLabel := defaultString(server.VersionLabel, "stable")
+	port := server.Port
+	if port == 0 {
+		port = 34197
+	}
 	rconPort := config.FactorioRconPort
 	if rconPort == 0 {
 		rconPort = 40000
 	}
 
-	m.catalog = ServerCatalog{
-		Version: 1,
-		Servers: []ServerRecord{
-			{
-				ID:             DefaultServerID,
-				Name:           "Server 1",
-				VersionLabel:   versionLabel,
-				VersionChannel: versionLabel,
-				BindIP:         defaultString(config.FactorioIP, "0.0.0.0"),
-				Port:           port,
-				RconPort:       rconPort,
-				RconPass:       config.FactorioRconPass,
-				Autostart:      config.Autostart == "true",
-				WatchdogInterval: 30,
-			},
-		},
+	return ServerRecord{
+		ID:               DefaultServerID,
+		Name:             "Server 1",
+		VersionLabel:     versionLabel,
+		VersionChannel:   versionLabel,
+		Savefile:         server.Savefile,
+		BindIP:           defaultString(server.BindIP, defaultString(config.FactorioIP, "0.0.0.0")),
+		Port:             port,
+		RconPort:         rconPort,
+		RconPass:         config.FactorioRconPass,
+		Autostart:        config.Autostart == "true",
+		WatchdogInterval: 30,
 	}
-
-	if err := m.saveCatalogLocked(); err != nil {
-		return err
-	}
-
-	log.Printf("Legacy migration complete")
-	return nil
 }
 
 func (m *ServerManager) rconWatchdog() {
@@ -360,28 +601,39 @@ func (m *ServerManager) rconWatchdog() {
 }
 
 func (m *ServerManager) watchdogCheckServer(server *Server) {
-	if server.WatchdogInterval <= 0 {
-		return
-	}
-	if !server.GetRunning() {
-		return
-	}
-	if time.Since(server.LastWatchdogPing) < time.Duration(server.WatchdogInterval)*time.Second {
+	stateMutex.Lock()
+	if server.WatchdogInterval <= 0 || !server.Running || server.Stopping ||
+		time.Since(server.LastWatchdogPing) < time.Duration(server.WatchdogInterval)*time.Second {
+		stateMutex.Unlock()
 		return
 	}
 	server.LastWatchdogPing = time.Now()
-	if server.RconConnected {
-		if server.Rcon == nil {
-			server.RconConnected = false
-		} else if _, err := server.Rcon.Write("/players online count"); err != nil {
-			log.Printf("rconWatchdog: RCON lost for server %s: %s", server.ID, err)
-			server.RconConnected = false
+	console, connected, id := server.Rcon, server.RconConnected, server.ID
+	stateMutex.Unlock()
+	if connected {
+		var err error
+		if console == nil {
+			err = errors.New("RCON console is not ready")
+		} else {
+			_, err = server.RunPersistentRCONCommand("/players online count")
+		}
+		if err != nil {
+			log.Printf("rconWatchdog: RCON lost for server %s: %v", id, err)
+			stateMutex.Lock()
+			current := server.Rcon == console
+			if current {
+				server.Rcon, server.RconConnected = nil, false
+			}
+			stateMutex.Unlock()
+			if current && console != nil {
+				_ = console.Close()
+			}
 		}
 	}
-	if !server.RconConnected {
+	snapshot := server.Snapshot()
+	if snapshot.Running && !snapshot.Stopping && !snapshot.RconConnected {
 		if err := server.connectRC(); err == nil {
-			server.RconConnected = true
-			log.Printf("rconWatchdog: RCON reconnected for server %s", server.ID)
+			log.Printf("rconWatchdog: RCON reconnected for server %s", id)
 		}
 	}
 }

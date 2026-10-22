@@ -16,15 +16,26 @@ import (
 
 var serverRCONCommandMutex sync.Mutex
 
-func localRCONAddress() string {
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(bootstrap.GetConfig().FactorioRconPort))
+func (server *Server) rconConnectionSettings() (string, string) {
+	config := bootstrap.GetConfig()
+	stateMutex.RLock()
+	port, password := server.RconPort, server.RconPass
+	stateMutex.RUnlock()
+	if port == 0 {
+		port = config.FactorioRconPort
+	}
+	if password == "" {
+		password = config.FactorioRconPass
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), password
 }
 
-func connectRC() error {
-	config := bootstrap.GetConfig()
-	rconAddr := localRCONAddress()
-	server := GetFactorioServer()
-	console, err := rcon.Dial(rconAddr, config.FactorioRconPass)
+func (server *Server) connectRC() error {
+	rconAddr, password := server.rconConnectionSettings()
+	stateMutex.RLock()
+	id := server.ID
+	stateMutex.RUnlock()
+	console, err := rcon.Dial(rconAddr, password)
 	if err != nil {
 		log.Printf("Cannot create rcon session: %s", err)
 		return err
@@ -37,11 +48,15 @@ func connectRC() error {
 	log.Printf("rcon session established on %s", rconAddr)
 	if pendingStop {
 		log.Printf("Factorio startup completed with a shutdown request pending")
-		runCleanStopCheckpoint()
+		if id == "" || id == DefaultServerID {
+			runCleanStopCheckpoint()
+		}
 		return server.signalStop()
 	}
-	startCheckpointMonitor(server)
-	startRconWatchdog()
+	if id == "" || id == DefaultServerID {
+		startCheckpointMonitor(server)
+		startRconWatchdog()
+	}
 
 	return nil
 }

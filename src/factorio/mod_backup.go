@@ -26,13 +26,27 @@ type ModBackupPreview struct {
 	HasSettings        bool        `json:"has_settings"`
 }
 
-func validateBackupMods(root string) (ModBackupPreview, error) {
+func validateBackupMods(root string, additionalBuiltIns ...string) (ModBackupPreview, error) {
 	result := ModBackupPreview{Mods: []BackupMod{}, EnabledBuiltInMods: []string{}, GameMode: GameModeFactorio}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return result, err
 	}
-	installed := map[string]bool{"base": true, "quality": true, "elevated-rails": true, "space-age": true}
+	builtIns := map[string]bool{"base": true, "quality": true, "elevated-rails": true, "space-age": true}
+	features := append([]string(nil), spaceAgeFeatureMods...)
+	for _, name := range additionalBuiltIns {
+		if ValidatePathElement(name) != nil {
+			return result, ErrInvalidBackup
+		}
+		if !builtIns[name] {
+			features = append(features, name)
+			builtIns[name] = true
+		}
+	}
+	installed := make(map[string]bool, len(builtIns))
+	for name := range builtIns {
+		installed[name] = true
+	}
 	versions := map[string]bool{}
 	for _, entry := range entries {
 		if !backupModFile(entry.Name()) || entry.IsDir() {
@@ -89,7 +103,7 @@ func validateBackupMods(root string) (ModBackupPreview, error) {
 		if ValidatePathElement(info.Name) != nil || ValidatePathElement(info.Version) != nil || info.FactorioVersion == NilVersion {
 			return result, ErrInvalidBackup
 		}
-		if info.Name == "base" || info.Name == "quality" || info.Name == "elevated-rails" || info.Name == "space-age" || versions[info.Name+"@"+info.Version] {
+		if builtIns[info.Name] || versions[info.Name+"@"+info.Version] {
 			return result, ErrInvalidBackup
 		}
 		versions[info.Name+"@"+info.Version] = true
@@ -112,7 +126,7 @@ func validateBackupMods(root string) (ModBackupPreview, error) {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			list.Mods = append(list.Mods, ModSimple{Name: name, Enabled: name != "quality" && name != "elevated-rails" && name != "space-age"})
+			list.Mods = append(list.Mods, ModSimple{Name: name, Enabled: !builtIns[name]})
 		}
 		if err := writeBackupJSON(path, list); err != nil {
 			return result, err
@@ -133,12 +147,16 @@ func validateBackupMods(root string) (ModBackupPreview, error) {
 	for index := range result.Mods {
 		result.Mods[index].Enabled = enabled[result.Mods[index].Name]
 	}
-	for _, name := range spaceAgeFeatureMods {
+	spaceAgeEnabled := 0
+	for index, name := range features {
 		if enabled[name] {
 			result.EnabledBuiltInMods = append(result.EnabledBuiltInMods, name)
+			if index < len(spaceAgeFeatureMods) {
+				spaceAgeEnabled++
+			}
 		}
 	}
-	if len(result.EnabledBuiltInMods) == len(spaceAgeFeatureMods) {
+	if spaceAgeEnabled == len(spaceAgeFeatureMods) {
 		result.GameMode = GameModeSpaceAge
 	} else if len(result.EnabledBuiltInMods) > 0 {
 		result.GameMode = GameModeCustom
@@ -146,7 +164,7 @@ func validateBackupMods(root string) (ModBackupPreview, error) {
 	// Add only missing DLC defaults. Preserve existing/unknown mod-list fields
 	// (including future per-mod metadata) instead of round-tripping a narrow struct.
 	var missing []ModSimple
-	for _, name := range spaceAgeFeatureMods {
+	for _, name := range features {
 		if !seen[name] {
 			missing = append(missing, ModSimple{Name: name, Enabled: false})
 		}

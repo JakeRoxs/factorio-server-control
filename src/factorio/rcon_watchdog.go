@@ -126,5 +126,5 @@ func reconnectRCON() error {
 	}
 
 	server.closeRcon()
-	return connectRC()
+	return server.connectRC()
 }

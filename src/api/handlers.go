@@ -405,12 +405,17 @@ func LoadConfig(w http.ResponseWriter, r *http.Request) {
 
 func StartServer(w http.ResponseWriter, r *http.Request) {
 	var resp interface{}
-	var server = factorio.GetFactorioServer()
+	server, found := serverFromRequest(r)
 	defer func() {
 		WriteResponse(w, resp)
 	}()
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	if !found {
+		resp = errServerNotFound
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	if factorio.WorldGenerationBusy() {
 		resp = "A world preview or creation is still running"
 		w.WriteHeader(http.StatusConflict)
@@ -467,6 +472,8 @@ func StartServer(w http.ResponseWriter, r *http.Request) {
 		resp = fmt.Sprintf("Error starting Factorio server: %s", startErr)
 		if errors.Is(startErr, factorio.ErrServerActive) || errors.Is(startErr, factorio.ErrWorldGenerationBusy) {
 			w.WriteHeader(http.StatusConflict)
+		} else if errors.Is(startErr, factorio.ErrInvalidServerConfiguration) {
+			w.WriteHeader(http.StatusBadRequest)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -481,6 +488,8 @@ func StartServer(w http.ResponseWriter, r *http.Request) {
 	started := false
 	for !started {
 		select {
+		case <-r.Context().Done():
+			return
 		case runErr := <-startResult:
 			if runErr != nil {
 				resp = fmt.Sprintf("Error starting Factorio server: %s", runErr)
@@ -668,6 +677,11 @@ func InstallFactorioRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := factorio.InstallRelease(normalizedTarget); err != nil {
+		if errors.Is(err, factorio.ErrProfileServerActive) {
+			resp = "Stop all games before changing the shared Factorio installation"
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		resp = fmt.Sprintf("Error installing Factorio %s release: %s", normalizedTarget, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return

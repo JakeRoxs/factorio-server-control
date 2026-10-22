@@ -43,25 +43,6 @@ func setCtrlHandlingIsDisabledForThisProcess(disabled bool) {
 	}
 }
 
-func (server *Server) Kill() error {
-	stopCheckpointMonitor()
-	server.SetStopping(true)
-	err := server.Cmd.Process.Signal(os.Kill)
-	if err != nil {
-		server.SetStopping(false)
-		if err.Error() == "os: process already finished" {
-			server.SetRunning(false)
-			return err
-		}
-		log.Printf("Error sending SIGKILL to Factorio process: %s", err)
-		return err
-	}
-	log.Println("Sent SIGKILL to Factorio process. Factorio forced to exit.")
-	server.closeRcon()
-
-	return nil
-}
-
 func (server *Server) Stop() error {
 	if !server.requestStop() {
 		return nil
@@ -70,8 +51,10 @@ func (server *Server) Stop() error {
 		log.Printf("Factorio is still starting; safe shutdown is queued until startup completes")
 		return nil
 	}
-	stopCheckpointMonitor()
-	runCleanStopCheckpoint()
+	if server.ID == "" || server.ID == DefaultServerID {
+		stopCheckpointMonitor()
+		runCleanStopCheckpoint()
+	}
 	return server.signalStop()
 }
 

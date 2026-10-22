@@ -23,7 +23,11 @@ type Routes []Route
 func ServerOffMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// only run if server is turned off
-		server := factorio.GetFactorioServer()
+		server, found := serverFromRequest(r)
+		if !found {
+			http.Error(w, errServerNotFound, http.StatusNotFound)
+			return
+		}
 		if server.IsBusy() {
 			http.Error(w, "factorio server still running", http.StatusLocked)
 		} else {
@@ -44,7 +48,12 @@ func ProfileDataMiddleware(next http.Handler) http.Handler {
 		modPackLoadOwnsLock := strings.HasPrefix(path, "/api/mods/packs/") && (strings.HasSuffix(path, "/load") || strings.HasSuffix(path, "/merge") || strings.HasSuffix(path, "/merge/preview"))
 		saveModImportOwnsLock := path == "/api/saves/mods/import"
 		modStartupSettingsOwnsLock := path == "/api/mods/startup-settings"
-		if strings.HasPrefix(path, "/api/profiles") || path == "/api/mods/backup/restore" || path == "/api/server/start" || modPackLoadOwnsLock || saveModImportOwnsLock || modStartupSettingsOwnsLock {
+		serverPath := strings.Split(strings.TrimPrefix(path, "/api/servers/"), "/")
+		serverOwnsLock := strings.HasPrefix(path, "/api/servers/") && len(serverPath) >= 2 &&
+			(serverPath[1] == "profiles" || (len(serverPath) == 2 && serverPath[1] == "start"))
+		serverCreateOwnsLock := path == "/api/servers" && r.Method == http.MethodPost
+		releaseInstallOwnsLock := path == "/api/server/release/install"
+		if strings.HasPrefix(path, "/api/profiles") || path == "/api/mods/backup/restore" || path == "/api/server/start" || serverOwnsLock || serverCreateOwnsLock || releaseInstallOwnsLock || modPackLoadOwnsLock || saveModImportOwnsLock || modStartupSettingsOwnsLock {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -520,7 +529,7 @@ var apiRoutes = Routes{
 		"POST",
 		"/servers",
 		CreateServerHandler,
-		true,
+		false,
 	}, {
 		"GetServer",
 		"GET",
@@ -532,7 +541,7 @@ var apiRoutes = Routes{
 		"PUT",
 		"/servers/{serverID}",
 		UpdateServerHandler,
-		true,
+		false,
 	}, {
 		"DeleteServer",
 		"DELETE",
@@ -544,7 +553,25 @@ var apiRoutes = Routes{
 		"POST",
 		"/servers/{serverID}/save",
 		SaveServerHandler,
+		false,
+	}, {
+		"StartServerByID",
+		"POST",
+		"/servers/{serverID}/start",
+		StartServerHandler,
 		true,
+	}, {
+		"StopServerByID",
+		"POST",
+		"/servers/{serverID}/stop",
+		StopServerHandler,
+		false,
+	}, {
+		"KillServerByID",
+		"POST",
+		"/servers/{serverID}/kill",
+		KillServerHandler,
+		false,
 	}, {
 		"ListServerProfiles",
 		"GET",

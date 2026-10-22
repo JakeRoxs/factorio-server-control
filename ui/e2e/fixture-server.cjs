@@ -4,7 +4,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const root = path.resolve(__dirname, "../../app");
-const pages = new Set(["/", "/login", "/saves", "/mods", "/server-settings", "/game-settings", "/console", "/logs", "/releases", "/profiles", "/user-management"]);
+const pages = new Set(["/", "/login", "/saves", "/mods", "/server-settings", "/game-settings", "/console", "/logs", "/releases", "/profiles", "/servers", "/user-management"]);
 const profiles = {
     active_profile_id: "demo-main",
     profiles: [
@@ -13,6 +13,7 @@ const profiles = {
     ]
 };
 const api = {
+    "/api/servers": [{id: "1", name: "Existing server", bindip: "0.0.0.0", port: 34197, rcon_port: 40000, running: false, stopping: false}],
     "/api/profiles": profiles,
     "/api/user/list": [{username: "demo-admin", role: "admin"}, {username: "demo-viewer", role: "viewer"}],
     "/api/saves/list": [{name: "demo.zip", size: 1234567, last_mod: "2026-01-01T12:00:00Z"}],
@@ -48,7 +49,7 @@ http.createServer((req, res) => {
             : json({username: scenario === "viewer" ? "demo-viewer" : "demo-admin", role: scenario === "viewer" ? "viewer" : "admin"});
         if (url.pathname === "/api/server/status") return scenario === "unknown"
             ? json("Status unavailable", 503)
-            : json({running: scenario === "running", stopping: false, savefile: "demo.zip", fac_version: "2.0.77"});
+            : json({id: "1", running: scenario === "running", stopping: false, savefile: "demo.zip", fac_version: "2.0.77"});
         if (url.pathname === "/api/server/players") return json({profile_id: "demo-main", server_running: scenario === "running", live_available: true, online_count: 0, online_players: [], players: []});
         if (Object.hasOwn(api, url.pathname)) return json(api[url.pathname]);
         return json(`Missing test fixture: ${req.method} ${url.pathname}`, 501);

@@ -35,6 +35,14 @@ export default {
         const response = await client.post(`/api/servers/${id}/save`);
         return response.data;
     },
+    start: async (id, bindip, port, savefile) => {
+        const response = await client.post(`/api/servers/${encodeURIComponent(id)}/start`, {bindip, port, savefile});
+        return response.data;
+    },
+    stop: async (id) => {
+        const response = await client.post(`/api/servers/${encodeURIComponent(id)}/stop`);
+        return response.data;
+    },
     profiles: async (id) => {
         const response = await client.get(`/api/servers/${id}/profiles`);
         return response.data;

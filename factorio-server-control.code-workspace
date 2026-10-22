@@ -1,0 +1,16 @@
+{
+  "folders": [
+	{
+		"path": "."
+	},
+	{
+		"path": "../factorio-server-manager"
+	},
+	{
+		"path": "../spaghet-oracle"
+	}
+],
+  "settings": {
+    "agendo.gitignoreTodos": true
+  }
+}

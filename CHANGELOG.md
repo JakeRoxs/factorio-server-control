@@ -3,6 +3,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+- Hydrate additional runtimes from their own persistent settings/admin files and the actual shared-engine metadata, create private defaults instead of inheriting Server 1's identity, and preserve their selected save across recreation. Validate catalog IDs, retain orphaned data without reassigning it, and roll back failed runtime creation/deletion.
+- Pass dedicated mod/config paths to child processes, write native-compatible compact INI path keys, and publish connected state with the installed RCON console. Keep secondary lifecycle actions, logs and status out of the default server's checkpoint/feed paths; require all games stopped before shared-engine replacement. Concurrent Windows launch fails closed pending isolated console control.
+- Allow administrator-only live RCON saves without a contradictory stopped-server guard, consume watchdog probe responses before the next command, and use instance-owned files for managed settings updates.
+- Update the declared Go toolchain and pinned build images to 1.26.10 to address `GO-2026-6809` in certificate validation, discovered by the required vulnerability scan.
+- Save mimalloc as a next-start preference while a game is running, without changing or restarting the live process. Keep other live configuration changes blocked, persist before publishing updates, and capture allocator selection in the startup snapshot.
+- Capture new reusable presets from the explicitly selected server without saves, credentials, local config paths or network identity. Distinguish preset-only definitions from retained legacy world snapshots in storage and the UI, and preserve the previous manifest if publication fails.
+- Use each runtime's recorded RCON connection settings for startup/reconnect and default checkpoints, and preserve the legacy profile's restored selected save when rebuilding the default runtime after restart. Correct the disposable lifecycle fixture's manager port and private split-mount ownership.
+- Stage server-scoped preset application with rollback on activation/catalog failures, preserve target worlds and local credentials/configuration, and reuse source definitions without transferring ownership. Reject malformed or incompatible mod sets before activation; built-in feature presets remain unavailable until per-server feature validation is implemented.
+- Route server-card Start and Stop actions to the selected server, load global templates from profile definitions, and prevent recursive profile-data locking on server-scoped profile requests. Use the bounded startup handler for server-scoped starts instead of waiting for the game process to exit.
+- Drain all catalog-owned Factorio runtimes during manager shutdown, preserve the previous catalog if file activation fails, and reject profile assignment to unavailable targets instead of silently falling back to server 1.
+- Submit server edit and creation forms using the shared button API, report failed server updates, and restore the saved per-server mimalloc option when loading the catalog.
+- Render server cards and global-profile panels with the shared Panel component's content API, and show the default server's shared live process status. Retain its catalog identity during migration and reject deletion so the existing controls cannot leave an unlisted runtime behind.
+- Preserve the active profile's loaded server settings, Factorio version and selected save when initializing the managed server catalog. Keep default-server controls on the same runtime instance instead of overwriting the configuration with an empty object at launch.
+
 ## [0.20.1] - 2026-10-17
 
 ### Security

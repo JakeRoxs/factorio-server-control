@@ -12,6 +12,19 @@ func TestRconWatchdogConnectedState(t *testing.T) {
 	}
 }
 
+func TestRCONConnectionUsesRuntimeCredentials(t *testing.T) {
+	first := &Server{RconPort: 40101, RconPass: "first-test-password"}
+	second := &Server{RconPort: 40102, RconPass: "second-test-password"}
+	firstAddress, firstPassword := first.rconConnectionSettings()
+	secondAddress, secondPassword := second.rconConnectionSettings()
+	if firstAddress != "127.0.0.1:40101" || secondAddress != "127.0.0.1:40102" {
+		t.Fatal("RCON connection ignored the runtime's own port")
+	}
+	if firstPassword != first.RconPass || secondPassword != second.RconPass {
+		t.Fatal("RCON connection ignored the runtime's own credentials")
+	}
+}
+
 func TestRconWatchdogStartStop(t *testing.T) {
 	startRconWatchdog()
 	defer stopRconWatchdog()

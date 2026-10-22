@@ -10,7 +10,7 @@ import Button from "./Button";
 import ConfirmDialog from "./ConfirmDialog";
 import {useProfiles} from "../context/ProfileContext";
 
-const isManagerPath = pathname => ["/profiles", "/user-management"].some(path => pathname === path || pathname.startsWith(path + "/"));
+const isManagerPath = pathname => ["/profiles", "/servers", "/user-management"].some(path => pathname === path || pathname.startsWith(path + "/"));
 const modeLabel = mode => mode === "space-age" ? "Space Age" : mode === "factorio" ? "Factorio" : "Custom";
 const channelLabel = target => target === "latest" ? "Experimental" : target === "stable" ? "Stable" : target ? "Pinned" : "";
 
@@ -103,7 +103,7 @@ const ProfileContextBar = ({serverStatus, refreshServerStatus, canManage = false
 
     return <section className="ui-context-strip" aria-label={`Active profile ${activeProfile.name}`}>
         <div className="ui-context-item ui-context-item--server">
-            <span className="ui-context-label">Server</span>
+            <span className="ui-context-label">Server 1</span>
             <span className="ui-context-value"><span className={`ui-status-orb ui-status-orb--${state}`}/><strong>{state}</strong></span>
         </div>
         <div className="ui-context-item ui-context-item--save" title={selectedSave}>

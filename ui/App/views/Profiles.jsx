@@ -147,14 +147,16 @@ const Profiles = ({serverStatus, refreshServerStatus, canManage = false}) => {
     return <>
         <PageHeader
             title="Profiles"
-            help="Profiles keep saves, versions, modes, mods and settings separate. Activating one snapshots the current setup and leaves Factorio stopped."
+            help="Legacy world snapshots for Server 1 coexist with reusable mods/settings presets during migration. Apply reusable presets from Servers without switching worlds."
             actions={canManage ? <>
-                <ProfileBackupExport profiles={state?.profiles || []} disabled={profileUIBusy || Boolean(activating)}/>
+                <ProfileBackupExport profiles={(state?.profiles || []).filter(profile => !profile.preset_only)} disabled={profileUIBusy || Boolean(activating)}/>
                 <BackupRestore disabled={profileUIBusy || Boolean(activating)} onComplete={applyProfileState}/>
                 <Button onClick={openCreate} isDisabled={profileUIBusy}>
                 <FontAwesomeIcon icon={faPlus}/> New profile
             </Button></> : null}
         />
+
+        <Alert type="info" className="mb-5">Activating a legacy profile switches Server 1's world. Reusable presets belong to the preset library and are applied from Servers; they do not contain or replace a saved world.</Alert>
 
         {locked && <Alert type={canManage ? "warning" : "info"} className="mb-5">
             {!canManage
@@ -283,6 +285,7 @@ const Profiles = ({serverStatus, refreshServerStatus, canManage = false}) => {
                                             <div className="flex flex-wrap items-center gap-2">
                                                 <h3 className="font-bold text-white">{profile.name}</h3>
                                                 {profile.active && <span className="ui-status-badge ui-status-badge--running">Active</span>}
+                                                {profile.preset_only && <span className="ui-status-badge">Reusable preset</span>}
                                             </div>
                                             {profile.description && <p>{profile.description}</p>}
                                         </div>
@@ -295,7 +298,7 @@ const Profiles = ({serverStatus, refreshServerStatus, canManage = false}) => {
                                                 ? "Space Age"
                                                 : profile.game_mode === "factorio" ? "Factorio" : "Custom"}
                                         />
-                                        <ProfileFact label="Saves" value={profile.save_count} icon={faFloppyDisk}/>
+                                        {!profile.preset_only && <ProfileFact label="Saves" value={profile.save_count} icon={faFloppyDisk}/>}
                                         <ProfileFact label="Mods" value={profile.mod_count} icon={faPuzzlePiece}/>
                                     </div>
                                     {profile.selected_save && <p
@@ -316,7 +319,7 @@ const Profiles = ({serverStatus, refreshServerStatus, canManage = false}) => {
                                         >
                                             <FontAwesomeIcon icon={faTrash}/> Delete
                                         </Button>}
-                                        {!profile.active && <Button
+                                        {!profile.active && !profile.preset_only && <Button
                                             size="sm"
                                             type="success"
                                             isLoading={activating === profile.id}
@@ -325,6 +328,7 @@ const Profiles = ({serverStatus, refreshServerStatus, canManage = false}) => {
                                         >
                                             <FontAwesomeIcon icon={faPlay}/> Activate
                                         </Button>}
+                                        {profile.preset_only && <Button size="sm" type="secondary" onClick={() => navigate("/servers")}>Use on a server</Button>}
                                     </div>}
                                 </>}
                             </article>;

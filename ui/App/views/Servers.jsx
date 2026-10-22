@@ -5,14 +5,13 @@ import {
     faLayerGroup, faDownload, faCheck, faSpinner
 } from "@fortawesome/free-solid-svg-icons";
 import serversResource from "../../api/resources/servers";
-import serverResource from "../../api/resources/server";
+import profilesResource from "../../api/resources/profiles";
 import PageHeader from "../components/PageHeader";
 import Panel from "../components/Panel";
 import Button from "../components/Button";
 import Alert from "../components/Alert";
-import socket from "../../api/socket";
 
-const Servers = ({canManage = false}) => {
+const Servers = ({canManage = false, serverStatus = {known: false}}) => {
     const [servers, setServers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
@@ -23,6 +22,7 @@ const Servers = ({canManage = false}) => {
     const [globalProfiles, setGlobalProfiles] = useState([]);
     const [isLoadingProfiles] = useState(false);
     const [createGlobalProfile, setCreateGlobalProfile] = useState({name: "", description: ""});
+    const [profileSourceID, setProfileSourceID] = useState("1");
     const [showCreateGlobalForm, setShowCreateGlobalForm] = useState(false);
     const [createForm, setCreateForm] = useState({
         name: "",
@@ -56,8 +56,8 @@ const Servers = ({canManage = false}) => {
 
     const loadGlobalProfiles = useCallback(async () => {
         try {
-            const data = await serversResource.list();
-            const global = (data || []).filter(s => s.is_global);
+            const data = await profilesResource.list();
+            const global = (data.profiles || []).filter(profile => profile.is_global);
             setGlobalProfiles(global);
         } catch (error) {
             console.error("Failed to load global profiles:", error);
@@ -69,37 +69,25 @@ const Servers = ({canManage = false}) => {
         if (canManage) loadGlobalProfiles();
     }, [loadServers, loadGlobalProfiles, canManage]);
 
-    useEffect(() => {
-        if (!canManage) return undefined;
-        socket.emit("servers subscribe");
-        const handler = () => {
-            loadServers();
-            servers.forEach(s => loadProfilesForServer(s.id));
-        };
-        socket.on("servers", handler);
-        return () => {
-            socket.off("servers", handler);
-            socket.emit("servers unsubscribe");
-        };
-    }, [canManage, loadServers, servers, loadProfilesForServer]);
-
     const handleStartServer = async (server) => {
         try {
-            await serverResource.start(server.bindip, server.port, server.savefile || "Load Latest");
+            await serversResource.start(server.id, server.bindip, server.port, server.savefile || "Load Latest");
             window.flash(`Started server ${server.name || server.id}`, "green");
             loadServers();
         } catch (error) {
             console.error("Failed to start server:", error);
+            window.flash(typeof error?.response?.data === "string" ? error.response.data : "The selected server could not be started.", "red");
         }
     };
 
     const handleStopServer = async (server) => {
         try {
-            await serverResource.stop();
+            await serversResource.stop(server.id);
             window.flash(`Stopped server ${server.name || server.id}`, "green");
             loadServers();
         } catch (error) {
             console.error("Failed to stop server:", error);
+            window.flash("The selected server could not be stopped.", "red");
         }
     };
 
@@ -109,6 +97,7 @@ const Servers = ({canManage = false}) => {
             window.flash(`Saved server ${server.name || server.id}`, "green");
         } catch (error) {
             console.error("Failed to save server:", error);
+            window.flash("The selected game could not be saved. Check that it is running and RCON is ready.", "red");
         }
     };
 
@@ -144,6 +133,7 @@ const Servers = ({canManage = false}) => {
             loadServers();
         } catch (error) {
             console.error("Failed to create server:", error);
+            window.flash(typeof error?.response?.data === "string" ? error.response.data : "The server could not be created. Check its version target and game port.", "red");
         }
     };
 
@@ -161,9 +151,6 @@ const Servers = ({canManage = false}) => {
         try {
             await serversResource.update(editingServer.id, {
                 name: editingServer.name,
-                bind_ip: editingServer.bind_ip,
-                port: editingServer.port,
-                autostart: editingServer.autostart,
                 use_mimalloc: editingServer.use_mimalloc
             });
             window.flash(`Updated server ${editingServer.name || editingServer.id}`, "green");
@@ -171,19 +158,21 @@ const Servers = ({canManage = false}) => {
             loadServers();
         } catch (error) {
             console.error("Failed to update server:", error);
+            window.flash("Server changes could not be saved. Please try again.", "red");
         }
     };
 
     const handleCreateGlobalProfile = async (e) => {
         e.preventDefault();
         try {
-            await serversResource.createGlobalProfile(createGlobalProfile.name, createGlobalProfile.description);
-            window.flash("Created global profile", "green");
+            await serversResource.createProfile(profileSourceID, createGlobalProfile.name, createGlobalProfile.description);
+            window.flash("Reusable preset captured without copying the saved world", "green");
             setCreateGlobalProfile({name: "", description: ""});
             setShowCreateGlobalForm(false);
             loadGlobalProfiles();
         } catch (error) {
             console.error("Failed to create global profile:", error);
+            window.flash(typeof error?.response?.data === "string" ? error.response.data : "The preset could not be captured. Check that the source server is stopped and its version and mods are available.", "red");
         }
     };
 
@@ -195,6 +184,7 @@ const Servers = ({canManage = false}) => {
             loadServers();
         } catch (error) {
             console.error("Failed to assign profile:", error);
+            window.flash("The profile could not be assigned to the selected server.", "red");
         }
     };
 
@@ -206,8 +196,13 @@ const Servers = ({canManage = false}) => {
             loadServers();
         } catch (error) {
             console.error("Failed to apply global profile:", error);
+            window.flash("The profile could not be applied to the selected server.", "red");
         }
     };
+
+    const sourceServer = servers.find(server => server.id === profileSourceID);
+    const sourceBusy = sourceServer?.running || sourceServer?.stopping ||
+        (serverStatus.id === profileSourceID && (serverStatus.running || serverStatus.stopping));
 
     if (isLoading) {
         return (
@@ -229,7 +224,7 @@ const Servers = ({canManage = false}) => {
 
     return (
         <div>
-            <PageHeader title="Servers"/>
+            <PageHeader title="Servers" help="Instances own their runtime data and ports, but currently share the installed Factorio executable. Other management pages still address Server 1."/>
 
             {canManage && (
                 <div className="mb-4 flex space-x-3">
@@ -238,37 +233,40 @@ const Servers = ({canManage = false}) => {
                             <FontAwesomeIcon icon={faPlus}/> New Server
                         </Button>
                     ) : (
-                        <Panel>
-                            <h3>Create New Server</h3>
-                            <form onSubmit={handleCreateServer} className="space-y-3">
-                                <div>
-                                    <label htmlFor="create-server-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
-                                    <input
-                                        id="create-server-name"
-                                        type="text"
-                                        name="name"
-                                        value={createForm.name}
-                                        onChange={handleCreateFormChange}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                    />
-                                </div>
-                                <div>
-                                    <label htmlFor="create-server-version" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Version</label>
-                                    <input
-                                        id="create-server-version"
-                                        type="text"
-                                        name="version"
-                                        value={createForm.version}
-                                        onChange={handleCreateFormChange}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                    />
-                                </div>
-                                <div className="flex space-x-3">
-                                    <Button type="submit">Create</Button>
-                                    <Button type="button" variant="secondary" onClick={() => setShowCreateForm(false)}>Cancel</Button>
-                                </div>
-                            </form>
-                        </Panel>
+                        <Panel content={
+                            <>
+                                <h3>Create New Server</h3>
+                                <form onSubmit={handleCreateServer} className="space-y-3">
+                                    <div>
+                                        <label htmlFor="create-server-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
+                                        <input
+                                            id="create-server-name"
+                                            type="text"
+                                            name="name"
+                                            value={createForm.name}
+                                            onChange={handleCreateFormChange}
+                                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label htmlFor="create-server-version" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Version target</label>
+                                        <input
+                                            id="create-server-version"
+                                            type="text"
+                                            name="version"
+                                            value={createForm.version}
+                                            onChange={handleCreateFormChange}
+                                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        />
+                                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">An exact version must match the installed engine. Independent engine installations are not available yet.</p>
+                                    </div>
+                                    <div className="flex space-x-3">
+                                        <Button isSubmit>Create</Button>
+                                        <Button type="button" variant="secondary" onClick={() => setShowCreateForm(false)}>Cancel</Button>
+                                    </div>
+                                </form>
+                            </>
+                        }/>
                     )}
                     <Button variant="secondary" onClick={() => { setShowGlobalProfiles(!showGlobalProfiles); if (!showGlobalProfiles) loadGlobalProfiles(); }}>
                         <FontAwesomeIcon icon={faLayerGroup}/> Global Profiles
@@ -277,8 +275,9 @@ const Servers = ({canManage = false}) => {
             )}
 
             {showGlobalProfiles && canManage && (
-                <Panel className="mb-4">
-                    <h3>Global Profile Templates</h3>
+                <Panel className="mb-4" content={<>
+                    <h3>Reusable Preset Library</h3>
+                    <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">Presets contain mods and supported settings, not worlds, credentials or network identity. Capture requires a stopped source server with a known installed version.</p>
                     {!showCreateGlobalForm ? (
                         <div>
                             <div className="space-y-2 mb-3">
@@ -290,11 +289,18 @@ const Servers = ({canManage = false}) => {
                                 ))}
                             </div>
                             <Button size="sm" onClick={() => setShowCreateGlobalForm(true)}>
-                                <FontAwesomeIcon icon={faPlus}/> New Global Profile
+                                <FontAwesomeIcon icon={faPlus}/> Capture Preset
                             </Button>
                         </div>
                     ) : (
                         <form onSubmit={handleCreateGlobalProfile} className="space-y-3">
+                            <div>
+                                <label htmlFor="preset-source-server" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Source server</label>
+                                <select id="preset-source-server" value={profileSourceID} onChange={event => setProfileSourceID(event.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
+                                    {servers.map(server => <option key={server.id} value={server.id}>{server.name || `Server ${server.id}`}</option>)}
+                                </select>
+                                {sourceBusy && <p className="text-sm text-amber-600">Stop the selected source server before capturing its preset. Other servers can stay running.</p>}
+                            </div>
                             <div>
                                 <label htmlFor="global-profile-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                                 <input
@@ -316,20 +322,25 @@ const Servers = ({canManage = false}) => {
                                 />
                             </div>
                             <div className="flex space-x-3">
-                                <Button type="submit">Create</Button>
+                                <Button isSubmit isDisabled={!sourceServer || sourceBusy}>Create preset</Button>
                                 <Button type="button" variant="secondary" onClick={() => setShowCreateGlobalForm(false)}>Cancel</Button>
                             </div>
                         </form>
                     )}
-                </Panel>
+                </>}/>
             )}
 
             <div className="space-y-4">
-                {servers.map(server => {
+                {servers.map(entry => {
+                    const server = serverStatus.known && serverStatus.id === entry.id
+                        ? {...entry, ...serverStatus, name: entry.name, use_mimalloc: entry.use_mimalloc,
+                            base_mod_version: entry.base_mod_version || serverStatus.base_mod_version,
+                            fac_version: entry.fac_version || serverStatus.fac_version}
+                        : entry;
                     const profiles = serverProfiles[server.id] || [];
                     return (
-                        <Panel key={server.id}>
-                            <div className="flex items-center justify-between">
+                        <Panel key={server.id} content={<>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="flex items-center space-x-3">
                                     <FontAwesomeIcon icon={faServer} className={server.running ? "text-green-500" : "text-gray-400"} size="lg"/>
                                     <div>
@@ -337,9 +348,10 @@ const Servers = ({canManage = false}) => {
                                         <p className="text-sm text-gray-500 dark:text-gray-400">
                                             Port {server.port} • RCON {server.rcon_port} •{" "}
                                             <span className={server.running ? "text-green-600" : "text-gray-400"}>
-                                                {server.running ? "Running" : "Stopped"}
+                                                {server.stopping ? "Stopping" : server.running ? "Running" : "Stopped"}
                                             </span>
                                         </p>
+                                        <p className="text-xs text-gray-400">Engine: {server.base_mod_version || server.fac_version || "Unknown"} (shared installation)</p>
                                         {server.profile_id && (
                                             <p className="text-xs text-gray-400">
                                                 Profile: {profiles.find(p => p.id === server.profile_id)?.name || server.profile_id}
@@ -351,7 +363,7 @@ const Servers = ({canManage = false}) => {
                                 {canManage && (
                                     <div className="flex space-x-2">
                                         {!server.running ? (
-                                            <Button size="sm" onClick={() => handleStartServer(server)}>
+                                            <Button size="sm" isDisabled={server.stopping} onClick={() => handleStartServer(server)}>
                                                 <FontAwesomeIcon icon={faPlay}/> Start
                                             </Button>
                                         ) : (
@@ -359,7 +371,7 @@ const Servers = ({canManage = false}) => {
                                                 <Button size="sm" onClick={() => handleSaveServer(server)}>
                                                     <FontAwesomeIcon icon={faSave}/> Save
                                                 </Button>
-                                                <Button size="sm" variant="danger" onClick={() => handleStopServer(server)}>
+                                                <Button size="sm" variant="danger" isDisabled={server.stopping} onClick={() => handleStopServer(server)}>
                                                     <FontAwesomeIcon icon={faStop}/> Stop
                                                 </Button>
                                             </>
@@ -376,9 +388,11 @@ const Servers = ({canManage = false}) => {
                                                 <FontAwesomeIcon icon={faEdit}/> Edit
                                             </Button>
                                         ) : null}
-                                        <Button size="sm" variant="danger" onClick={() => handleDeleteServer(server)}>
-                                            <FontAwesomeIcon icon={faTrash}/>
-                                        </Button>
+                                        {server.id !== "1" && (
+                                            <Button size="sm" variant="danger" isDisabled={server.running || server.stopping} aria-label={`Delete ${server.name || server.id}`} onClick={() => handleDeleteServer(server)}>
+                                                <FontAwesomeIcon icon={faTrash}/>
+                                            </Button>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -407,9 +421,10 @@ const Servers = ({canManage = false}) => {
                                             />
                                             <span>Use mimalloc memory allocator (Linux only)</span>
                                         </label>
+                                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Saved for the next server start. Changing this does not restart or modify a running game.</p>
                                     </div>
                                     <div className="flex space-x-3">
-                                        <Button type="submit">Save Changes</Button>
+                                        <Button isSubmit>Save Changes</Button>
                                         <Button type="button" variant="secondary" onClick={() => setEditingServer(null)}>Cancel</Button>
                                     </div>
                                 </form>
@@ -450,7 +465,7 @@ const Servers = ({canManage = false}) => {
                                     </div>
                                 </div>
                             )}
-                        </Panel>
+                        </>}/>
                     );
                 })}
             </div>
