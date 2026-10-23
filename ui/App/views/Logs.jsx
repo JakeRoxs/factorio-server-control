@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useState} from "react";
+import {useSearchParams} from "react-router-dom";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faArrowsRotate, faFileLines} from "@fortawesome/free-solid-svg-icons";
 import log from "../../api/resources/log";
@@ -10,6 +11,8 @@ import Alert from "../components/Alert";
 import ScopeBadge from "../components/ScopeBadge";
 
 const Logs = () => {
+    const [searchParams] = useSearchParams();
+    const serverID = searchParams.get("server") || null;
     const [logs, setLogs] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
@@ -18,13 +21,16 @@ const Logs = () => {
         setIsLoading(true);
         setLoadError("");
         try {
-            setLogs(await log.tail() || []);
+            const result = serverID
+                ? await log.tailForServer(serverID)
+                : await log.tail();
+            setLogs(result || []);
         } catch (error) {
             setLoadError("Factorio logs could not be loaded.");
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [serverID]);
 
     useEffect(() => { loadLogs(); }, [loadLogs]);
 

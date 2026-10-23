@@ -222,6 +222,26 @@ test("viewer pages do not expose mutations or the admin console", async ({page})
     await expect(page.getByRole("heading", {name: "Create user"})).toHaveCount(0);
 });
 
+test("viewer cannot see server mutation controls on the servers page", async ({page}) => {
+    await page.setExtraHTTPHeaders({"X-FSM-Test-Scenario": "viewer"});
+    await page.route("**/api/servers", route => route.fulfill({json: [
+        {id: "1", name: "Server One", running: true, stopping: false, port: 34197, bindip: "0.0.0.0"},
+        {id: "2", name: "Server Two", running: false, stopping: false, port: 34198, bindip: "0.0.0.0"}
+    ]}));
+    await page.goto("/servers");
+    // Both server cards should be visible
+    await expect(page.getByRole("heading", {level: 3, name: "Server One"})).toBeVisible();
+    await expect(page.getByRole("heading", {level: 3, name: "Server Two"})).toBeVisible();
+    // No mutation buttons should be visible
+    await expect(page.getByRole("button", {name: "Start"})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: "Stop"})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: "Save"})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: "Create World"})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: "Edit"})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: "New Server"})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: "Global Profiles"})).toHaveCount(0);
+});
+
 test("failed save deletion keeps the save and its confirmation recoverable", async ({page}) => {
     await disableNativePointerFocus(page);
     await page.goto("/saves");
@@ -308,4 +328,82 @@ test("anonymous deep links lead to login without loading protected page chunks",
     await expect(page).toHaveURL(/\/login$/);
     await expect(page.locator('input[type="password"]')).toBeVisible();
     expect(chunks).toEqual([]);
+});
+
+test("two simultaneously running servers appear as distinct cards with independent state", async ({page}) => {
+    await page.route("**/api/servers", route => {
+        route.fulfill({json: [
+            {id: "1", name: "Server One", running: true, stopping: false, port: 34197, rcon_port: 40000, bindip: "0.0.0.0", base_mod_version: "2.1.20", savefile: "world-one.zip"},
+            {id: "2", name: "Server Two", running: true, stopping: false, port: 34198, rcon_port: 40001, bindip: "0.0.0.0", base_mod_version: "2.1.20", savefile: "world-two.zip"}
+        ]});
+    });
+    await page.goto("/servers");
+    // Both server names visible as headings
+    await expect(page.getByRole("heading", {level: 3, name: "Server One"})).toBeVisible();
+    await expect(page.getByRole("heading", {level: 3, name: "Server Two"})).toBeVisible();
+    // Each card shows its own port
+    const card1 = page.locator("section").filter({has: page.getByRole("heading", {level: 3, name: "Server One"})});
+    const card2 = page.locator("section").filter({has: page.getByRole("heading", {level: 3, name: "Server Two"})});
+    await expect(card1).toContainText("34197");
+    await expect(card2).toContainText("34198");
+    // Each card shows its own engine version
+    await expect(card1).toContainText("2.1.20");
+    await expect(card2).toContainText("2.1.20");
+});
+
+test("two servers with different states appear as distinct cards", async ({page}) => {
+    await page.route("**/api/servers", route => {
+        route.fulfill({json: [
+            {id: "1", name: "Running Server", running: true, stopping: false, port: 34197, rcon_port: 40000, bindip: "0.0.0.0", base_mod_version: "2.1.20"},
+            {id: "2", name: "Stopped Server", running: false, stopping: false, port: 34198, rcon_port: 40001, bindip: "0.0.0.0", base_mod_version: "2.1.20"}
+        ]});
+    });
+    await page.goto("/servers");
+    // Both server names visible as headings
+    await expect(page.getByRole("heading", {level: 3, name: "Running Server"})).toBeVisible();
+    await expect(page.getByRole("heading", {level: 3, name: "Stopped Server"})).toBeVisible();
+    // Each card shows its own port
+    const runningCard = page.locator("section").filter({has: page.getByRole("heading", {level: 3, name: "Running Server"})});
+    const stoppedCard = page.locator("section").filter({has: page.getByRole("heading", {level: 3, name: "Stopped Server"})});
+    await expect(runningCard).toContainText("34197");
+    await expect(stoppedCard).toContainText("34198");
+    // Each card shows its own engine version
+    await expect(runningCard).toContainText("2.1.20");
+    await expect(stoppedCard).toContainText("2.1.20");
+});
+
+test("two servers target their own lifecycle endpoints independently", async ({page}) => {
+    await page.route("**/api/servers", route => route.fulfill({json: [
+        {id: "1", name: "Server One", running: false, stopping: false, port: 34197, bindip: "0.0.0.0"},
+        {id: "2", name: "Server Two", running: true, stopping: false, port: 34198, bindip: "0.0.0.0"}
+    ]}));
+    const lifecycleCalls = [];
+    page.on("request", request => {
+        if (request.method() === "POST" && /\/servers?\/\d+\/(?:start|stop|kill|save)$/.test(new URL(request.url()).pathname)) {
+            lifecycleCalls.push(request.url());
+        }
+    });
+    await page.goto("/servers");
+    // Server One is stopped: has Start button
+    const card1 = page.locator("section").filter({has: page.getByRole("heading", {level: 3, name: "Server One", exact: true})});
+    await expect(card1.getByRole("button", {name: "Start", exact: true})).toBeVisible();
+    // Server Two is running: has Stop and Save buttons
+    const card2 = page.locator("section").filter({has: page.getByRole("heading", {level: 3, name: "Server Two", exact: true})});
+    await expect(card2.getByRole("button", {name: "Stop", exact: true})).toBeVisible();
+    await expect(card2.getByRole("button", {name: "Save", exact: true})).toBeVisible();
+    // Start Server One
+    await card1.getByRole("button", {name: "Start", exact: true}).click();
+    // Save Server Two
+    await card2.getByRole("button", {name: "Save", exact: true}).click();
+    // Stop Server Two
+    await card2.getByRole("button", {name: "Stop", exact: true}).click();
+    await expect.poll(() => lifecycleCalls.length).toBe(3);
+    expect(lifecycleCalls).toEqual([
+        expect.stringContaining("/api/servers/1/start"),
+        expect.stringContaining("/api/servers/2/save"),
+        expect.stringContaining("/api/servers/2/stop")
+    ]);
+    // No cross-server calls
+    expect(lifecycleCalls.some(url => /\/servers?\/1\/(?:save|stop|kill)$/.test(url))).toBe(false);
+    expect(lifecycleCalls.some(url => /\/servers?\/2\/start$/.test(url))).toBe(false);
 });

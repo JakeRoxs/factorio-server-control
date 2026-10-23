@@ -7,10 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/OpenFactorioServerManager/factorio-server-manager/bootstrap"
 )
 
-// Presets deliberately exclude identity, credentials, visibility, access lists,
-// paths and networking. Unknown settings stay local until explicitly supported.
+// Preset field list (explicit):
+// Included: max_players, ignore_player_limit_for_returning_players,
+//   autosave_interval, autosave_slots, autosave_only_on_server,
+//   non_blocking_saving, afk_autokick_interval, auto_pause,
+//   auto_pause_when_players_connect, only_admins_can_pause_the_game,
+//   allow_commands.
+// Excluded (always local to each server): name, bind_address, server_port,
+//   rcon_password, rcon_enabled, game_password, visibility, whitelist,
+//   admins, tokens, savefile, mod directories, config paths, and any
+//   setting not explicitly listed above.
 var presetSettings = map[string]string{
 	"max_players": "number", "ignore_player_limit_for_returning_players": "bool",
 	"autosave_interval": "number", "autosave_slots": "number", "autosave_only_on_server": "bool",
@@ -287,7 +297,9 @@ func assignProfileToServer(serverID, profileID string) (err error) {
 		}
 	}
 	if len(preview.EnabledBuiltInMods) > 0 {
-		return fmt.Errorf("%w: built-in feature presets require per-server feature availability validation", ErrInvalidProfile)
+		if err := validateTargetFeatureAvailability(preview.EnabledBuiltInMods); err != nil {
+			return err
+		}
 	}
 	modSet, err := readMergeModSet(mods.staging)
 	if err != nil {
@@ -371,6 +383,38 @@ func assignProfileToServer(serverID, profileID string) (err error) {
 		if cleanupErr := swap.commit(); cleanupErr != nil {
 			log.Printf("Preset committed but temporary transaction cleanup failed")
 		}
+	}
+	return nil
+}
+
+// presetFactorioDir returns the shared Factorio installation directory.
+// Overridable in tests to point at a mock installation.
+var presetFactorioDir = func() string {
+	return bootstrap.GetConfig().FactorioDir
+}
+
+// validateTargetFeatureAvailability checks that every enabled built-in feature
+// mod in the preset has its data files present in the shared Factorio
+// installation. All servers on this host share the same engine, so the check
+// is installation-wide rather than per-server.
+func validateTargetFeatureAvailability(featureMods []string) error {
+	factorioDir := presetFactorioDir()
+	if factorioDir == "" {
+		return fmt.Errorf("%w: Factorio installation directory is not configured", ErrInvalidProfile)
+	}
+	var unavailable []string
+	for _, name := range featureMods {
+		if ValidatePathElement(name) != nil {
+			return fmt.Errorf("%w: invalid built-in mod name %q", ErrInvalidProfile, name)
+		}
+		infoPath := filepath.Join(factorioDir, "data", name, "info.json")
+		if _, err := os.Stat(infoPath); err != nil {
+			unavailable = append(unavailable, name)
+		}
+	}
+	if len(unavailable) > 0 {
+		return fmt.Errorf("%w: preset requires built-in features not available in this Factorio installation: %s",
+			ErrInvalidProfile, strings.Join(unavailable, ", "))
 	}
 	return nil
 }

@@ -281,6 +281,76 @@ func CreateWorld(request WorldGenerationRequest) (Save, error) {
 	return Save{Name: info.Name(), LastMod: info.ModTime(), Size: info.Size()}, nil
 }
 
+func CreateServerWorld(serverID string, request WorldGenerationRequest) (Save, error) {
+	normalized, _, err := normalizeWorldGenerationRequest(request, false)
+	if err != nil {
+		return Save{}, err
+	}
+	if !worldGenerationLock.TryLock() {
+		return Save{}, ErrWorldGenerationBusy
+	}
+	defer worldGenerationLock.Unlock()
+
+	manager := GetServerManager()
+	if manager == nil {
+		return Save{}, errors.New("server manager is not initialized")
+	}
+	server, ok := manager.GetServer(serverID)
+	if !ok {
+		return Save{}, fmt.Errorf("server %s not found", serverID)
+	}
+	if server.GetRunning() || server.IsStopping() {
+		return Save{}, ErrFactorioMustBeStopped
+	}
+
+	savesDir := server.SavesDir
+	if err := os.MkdirAll(savesDir, 0755); err != nil {
+		return Save{}, fmt.Errorf("create saves directory: %w", err)
+	}
+	if !filepath.IsLocal(normalized.Name) {
+		return Save{}, errors.New("save name must be a local filename")
+	}
+	finalPath := filepath.Join(savesDir, normalized.Name)
+	if _, err := os.Stat(finalPath); err == nil {
+		return Save{}, ErrSaveAlreadyExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Save{}, fmt.Errorf("inspect save destination: %w", err)
+	}
+
+	temporaryDir, err := os.MkdirTemp(savesDir, ".world-create-*")
+	if err != nil {
+		return Save{}, fmt.Errorf("create world workspace: %w", err)
+	}
+	defer os.RemoveAll(temporaryDir)
+
+	settingsPath, err := writeMapGenSettings(temporaryDir, normalized)
+	if err != nil {
+		return Save{}, err
+	}
+	temporarySave := filepath.Join(temporaryDir, "world.zip")
+	args := worldGenerationArgs(normalized, settingsPath)
+	args = append(args, "--create", temporarySave)
+	if err := runFactorioWorldCommand(5*time.Minute, args); err != nil {
+		return Save{}, fmt.Errorf("create Factorio world: %w", err)
+	}
+
+	info, err := os.Stat(temporarySave)
+	if err != nil {
+		return Save{}, fmt.Errorf("inspect generated save: %w", err)
+	}
+	if !isUsableSave(info) {
+		return Save{}, errors.New("Factorio produced an incomplete save archive")
+	}
+	if err := os.Rename(temporarySave, finalPath); err != nil {
+		return Save{}, fmt.Errorf("activate generated save: %w", err)
+	}
+	info, err = os.Stat(finalPath)
+	if err != nil {
+		return Save{}, fmt.Errorf("inspect activated save: %w", err)
+	}
+	return Save{Name: info.Name(), LastMod: info.ModTime(), Size: info.Size()}, nil
+}
+
 func WorldGenerationBusy() bool {
 	if !worldGenerationLock.TryLock() {
 		return true

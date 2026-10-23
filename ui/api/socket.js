@@ -102,6 +102,8 @@ const disconnect = () => {
 bus.on("log subscribe", () => subscribe("gamelog"));
 bus.on("log unsubscribe", () => unsubscribe("gamelog"));
 bus.on("server status subscribe", () => subscribe("server_status"));
+bus.on("server status:subscribe", event => subscribe(`servers:${event.serverID}:status`));
+bus.on("server status:unsubscribe", event => unsubscribe(`servers:${event.serverID}:status`));
 bus.on("command send", command => {
     if (!sendControl("command", command)) {
         bus.emit("command_error", "Console connection is not ready yet.");

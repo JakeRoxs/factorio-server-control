@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useState} from "react";
+import {useSearchParams} from "react-router-dom";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faDownload, faPuzzlePiece, faRotate, faTrashAlt} from "@fortawesome/free-solid-svg-icons";
 import Fuse from "fuse.js";
@@ -25,6 +26,8 @@ import ScopeBadge from "../../components/ScopeBadge";
 import BackupRestore from "../../components/BackupRestore";
 
 const Mods = ({serverStatus, canManage = false}) => {
+    const [searchParams] = useSearchParams();
+    const serverID = searchParams.get("server") || null;
     const {activeProfile, refreshProfiles} = useProfiles();
     const [installedMods, setInstalledMods] = useState([]);
     const [modPacks, setModPacks] = useState([]);
@@ -48,13 +51,15 @@ const Mods = ({serverStatus, canManage = false}) => {
     }, []);
 
     const fetchInstalledMods = useCallback(async () => {
-        const result = await modsResource.installed();
+        const result = serverID
+            ? await modsResource.installedForServer(serverID)
+            : await modsResource.installed();
         setUpdatableMods([]);
         setInstalledMods(result || []);
         setStartupSettingsRefreshKey(token => token + 1);
         refreshProfiles().catch(() => undefined);
         return result;
-    }, [refreshProfiles]);
+    }, [refreshProfiles, serverID]);
 
     const fetchModPacks = useCallback(async () => {
         const result = await modsResource.packs.list();

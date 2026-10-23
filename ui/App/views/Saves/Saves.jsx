@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useState} from "react";
-import {Link} from "react-router-dom";
+import {Link, useSearchParams} from "react-router-dom";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faDownload, faHardDrive, faPlus, faRotate, faTrashAlt} from "@fortawesome/free-solid-svg-icons";
 import savesResource from "../../../api/resources/saves";
@@ -22,6 +22,8 @@ const formatSize = bytes => {
 };
 
 const Saves = ({serverStatus, canManage = false}) => {
+    const [searchParams] = useSearchParams();
+    const serverID = searchParams.get("server") || null;
     const {activeProfile, refreshProfiles} = useProfiles();
     const [saves, setSaves] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -33,7 +35,9 @@ const Saves = ({serverStatus, canManage = false}) => {
         setIsLoading(true);
         setLoadError("");
         try {
-            const result = await savesResource.list();
+            const result = serverID
+                ? await savesResource.listForServer(serverID)
+                : await savesResource.list();
             setSaves(result || []);
             refreshProfiles().catch(() => undefined);
         } catch (error) {
@@ -43,7 +47,7 @@ const Saves = ({serverStatus, canManage = false}) => {
         } finally {
             setIsLoading(false);
         }
-    }, [refreshProfiles]);
+    }, [refreshProfiles, serverID]);
 
     useEffect(() => { updateList(); }, [updateList]);
 
@@ -85,6 +89,7 @@ const Saves = ({serverStatus, canManage = false}) => {
     return <>
         <PageHeader
             title="Saves & checkpoints"
+            help={serverID ? `Showing saves for server ${serverID}.` : null}
             actions={<div className="flex flex-wrap gap-2">
                 <ScopeBadge/>
                 <div className="ui-status-badge">{isLoading || loadError ? "Saves unavailable" : `${saves.length} ${saves.length === 1 ? "save" : "saves"}`}</div>

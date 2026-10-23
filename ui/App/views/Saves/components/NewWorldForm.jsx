@@ -4,6 +4,7 @@ import {
     faDice, faGlobe, faImage, faPlus, faRotate, faWandMagicSparkles
 } from "@fortawesome/free-solid-svg-icons";
 import saves from "../../../../api/resources/saves";
+import serversResource from "../../../../api/resources/servers";
 import Alert from "../../../components/Alert";
 import Button from "../../../components/Button";
 import Label from "../../../components/Label";
@@ -60,7 +61,7 @@ const OptionalSelect = ({id, value, onChange, options, disabled = false}) => <se
     {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
 </select>;
 
-const NewWorldForm = ({onSuccess}) => {
+const NewWorldForm = ({onSuccess, serverID}) => {
     const [options, setOptions] = useState(null);
     const [loadError, setLoadError] = useState("");
     const [name, setName] = useState("");
@@ -212,7 +213,12 @@ const NewWorldForm = ({onSuccess}) => {
         }
         setBusyAction("create");
         try {
-            const created = await saves.generation.create(payloadFor("nauvis"));
+            let created;
+            if (serverID) {
+                created = await serversResource.createWorld(serverID, payloadFor("nauvis"));
+            } else {
+                created = await saves.generation.create(payloadFor("nauvis"));
+            }
             await onSuccess();
             setName("");
             window.flash(`${created?.name || "World"} created successfully.`, "green");

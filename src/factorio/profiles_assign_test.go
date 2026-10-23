@@ -505,6 +505,96 @@ func TestAssignProfileToServerFailsClosedForUnknownServer(t *testing.T) {
 	require.True(t, after.Active)
 }
 
+func TestApplyGlobalProfileToMultipleServersKeepsReusableSource(t *testing.T) {
+	environment := setupProfileTest(t)
+	require.NoError(t, os.Remove(filepath.Join(environment.active["mods"], "current_1.0.0.zip")))
+	require.NoError(t, InitializeProfiles())
+
+	globalState, err := CreateGlobalProfile("Multi-target template", "")
+	require.NoError(t, err)
+	global := findProfileByName(t, globalState, "Multi-target template")
+	require.True(t, global.IsGlobal)
+
+	// Create a manager with two servers
+	serverID1, manager := installTestServerManager(t)
+	server1, ok := manager.GetServer(serverID1)
+	require.True(t, ok)
+	server1.Version = Version{2, 1, 14}
+	require.NoError(t, os.MkdirAll(server1.SavesDir, 0700))
+	server1.Savefile = "world-one.zip"
+	require.NoError(t, os.WriteFile(filepath.Join(server1.SavesDir, server1.Savefile), []byte("world one"), 0600))
+
+	server2, err := manager.CreateServer("Server 2", "stable", "127.0.0.1", 34201, false)
+	require.NoError(t, err)
+	server2.SavesDir = filepath.Join(environment.root, "server2-saves")
+	server2.ModsDir = filepath.Join(environment.root, "server2-mods")
+	server2.ConfigDir = filepath.Join(environment.root, "server2-config")
+	server2.Version = Version{2, 1, 14}
+	require.NoError(t, os.MkdirAll(server2.SavesDir, 0700))
+	server2.Savefile = "world-two.zip"
+	require.NoError(t, os.WriteFile(filepath.Join(server2.SavesDir, server2.Savefile), []byte("world two"), 0600))
+
+	// Apply preset to first server
+	_, err = ApplyGlobalProfileToServer(serverID1, global.ID)
+	require.NoError(t, err)
+
+	// Apply preset to second server
+	serverID2 := server2.ID
+	_, err = ApplyGlobalProfileToServer(serverID2, global.ID)
+	require.NoError(t, err)
+
+	// Both servers reference the same preset
+	server1, _ = manager.GetServer(serverID1)
+	server2, _ = manager.GetServer(serverID2)
+	require.Equal(t, global.ID, server1.ProfileID)
+	require.Equal(t, global.ID, server2.ProfileID)
+
+	// Both servers' saves are preserved
+	world1, err := os.ReadFile(filepath.Join(server1.SavesDir, server1.Savefile))
+	require.NoError(t, err)
+	require.Equal(t, []byte("world one"), world1)
+	world2, err := os.ReadFile(filepath.Join(server2.SavesDir, server2.Savefile))
+	require.NoError(t, err)
+	require.Equal(t, []byte("world two"), world2)
+
+	// The preset source is still reusable (not consumed)
+	state, err := ListProfiles()
+	require.NoError(t, err)
+	preset := findProfileByName(t, state, "Multi-target template")
+	require.True(t, preset.IsGlobal)
+	require.Empty(t, preset.ServerID)
+}
+
+func TestApplyGlobalProfileToRunningServerIsBlocked(t *testing.T) {
+	environment := setupProfileTest(t)
+	require.NoError(t, os.Remove(filepath.Join(environment.active["mods"], "current_1.0.0.zip")))
+	require.NoError(t, InitializeProfiles())
+
+	globalState, err := CreateGlobalProfile("Running block template", "")
+	require.NoError(t, err)
+	global := findProfileByName(t, globalState, "Running block template")
+	require.True(t, global.IsGlobal)
+
+	serverID, manager := installTestServerManager(t)
+	server, ok := manager.GetServer(serverID)
+	require.True(t, ok)
+	server.Version = Version{2, 1, 14}
+	require.NoError(t, os.MkdirAll(server.SavesDir, 0700))
+	server.Savefile = "running-world.zip"
+	require.NoError(t, os.WriteFile(filepath.Join(server.SavesDir, server.Savefile), []byte("running world"), 0600))
+
+	// Simulate a running server
+	server.Running = true
+
+	_, err = ApplyGlobalProfileToServer(serverID, global.ID)
+	require.Error(t, err, "applying a preset to a running server must be blocked")
+
+	// The server's save must be preserved
+	actualWorld, err := os.ReadFile(filepath.Join(server.SavesDir, server.Savefile))
+	require.NoError(t, err)
+	require.Equal(t, []byte("running world"), actualWorld)
+}
+
 // TestApplyGlobalProfileToServerFailsClosedWithoutManager verifies that the
 // apply path fails closed when no server manager is available.
 func TestApplyGlobalProfileToServerFailsClosedWithoutManager(t *testing.T) {
@@ -517,4 +607,205 @@ func TestApplyGlobalProfileToServerFailsClosedWithoutManager(t *testing.T) {
 
 	_, err = ApplyGlobalProfileToServer(DefaultServerID, global.ID)
 	require.ErrorIs(t, err, ErrServerMissing)
+}
+
+func TestValidateTargetFeatureAvailabilityAcceptsAvailableFeatures(t *testing.T) {
+	factorioDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(factorioDir, "data", "quality"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(factorioDir, "data", "quality", "info.json"), []byte(`{"name":"quality"}`), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Join(factorioDir, "data", "elevated-rails"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(factorioDir, "data", "elevated-rails", "info.json"), []byte(`{"name":"elevated-rails"}`), 0600))
+
+	original := presetFactorioDir
+	presetFactorioDir = func() string { return factorioDir }
+	t.Cleanup(func() { presetFactorioDir = original })
+
+	err := validateTargetFeatureAvailability([]string{"quality", "elevated-rails"})
+	require.NoError(t, err)
+}
+
+func TestValidateTargetFeatureAvailabilityRejectsMissingFeatures(t *testing.T) {
+	factorioDir := t.TempDir()
+	// Only quality is available, elevated-rails is missing
+	require.NoError(t, os.MkdirAll(filepath.Join(factorioDir, "data", "quality"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(factorioDir, "data", "quality", "info.json"), []byte(`{"name":"quality"}`), 0600))
+
+	original := presetFactorioDir
+	presetFactorioDir = func() string { return factorioDir }
+	t.Cleanup(func() { presetFactorioDir = original })
+
+	err := validateTargetFeatureAvailability([]string{"quality", "elevated-rails"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "elevated-rails")
+	require.NotContains(t, err.Error(), "quality")
+}
+
+func TestValidateTargetFeatureAvailabilityRejectsInvalidNames(t *testing.T) {
+	factorioDir := t.TempDir()
+	original := presetFactorioDir
+	presetFactorioDir = func() string { return factorioDir }
+	t.Cleanup(func() { presetFactorioDir = original })
+
+	err := validateTargetFeatureAvailability([]string{"../escape"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid built-in mod name")
+}
+
+func TestValidateTargetFeatureAvailabilityRejectsEmptyDirectory(t *testing.T) {
+	original := presetFactorioDir
+	presetFactorioDir = func() string { return "" }
+	t.Cleanup(func() { presetFactorioDir = original })
+
+	err := validateTargetFeatureAvailability([]string{"quality"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not configured")
+}
+
+func TestApplyGlobalProfilePreservesTargetIdentityAndNetwork(t *testing.T) {
+	env := setupProfileTest(t)
+	require.NoError(t, os.Remove(filepath.Join(env.active["mods"], "current_1.0.0.zip")))
+	require.NoError(t, InitializeProfiles())
+
+	// Create a global preset before installing the manager
+	globalState, err := CreateGlobalProfile("Identity test preset", "")
+	require.NoError(t, err)
+	global := findProfileByName(t, globalState, "Identity test preset")
+	require.True(t, global.IsGlobal)
+
+	// Install manager and get the target server
+	serverID, manager := installTestServerManager(t)
+	target, ok := manager.GetServer(serverID)
+	require.True(t, ok)
+	target.Version = Version{2, 1, 14}
+	target.SavesDir = filepath.Join(env.root, "target-saves")
+	target.ModsDir = filepath.Join(env.root, "target-mods")
+	target.ConfigDir = filepath.Join(env.root, "target-config")
+	require.NoError(t, os.MkdirAll(target.SavesDir, 0700))
+	require.NoError(t, os.MkdirAll(target.ModsDir, 0700))
+	require.NoError(t, os.MkdirAll(target.ConfigDir, 0700))
+	target.Savefile = "target.zip"
+	require.NoError(t, os.WriteFile(filepath.Join(target.SavesDir, target.Savefile), []byte("target world"), 0600))
+	// Target has its own name, bindip, port, and RCON password
+	require.NoError(t, os.WriteFile(filepath.Join(target.ConfigDir, "server-settings.json"), []byte(`{"name":"Target Game","bind_address":"192.168.1.100","server_port":34301,"rcon_password":"target-rcon-secret","max_players":10}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(target.ModsDir, "mod-list.json"), []byte(`{"mods":[{"name":"base","enabled":true},{"name":"core","enabled":true}]}`), 0600))
+
+	// Apply preset to target
+	_, err = ApplyGlobalProfileToServer(target.ID, global.ID)
+	require.NoError(t, err)
+
+	// Verify target's identity and network settings are preserved
+	var targetSettings map[string]interface{}
+	require.NoError(t, readBackupJSON(filepath.Join(target.ConfigDir, "server-settings.json"), &targetSettings))
+	require.Equal(t, "Target Game", targetSettings["name"])
+	require.Equal(t, "192.168.1.100", targetSettings["bind_address"])
+	require.Equal(t, float64(34301), targetSettings["server_port"])
+	require.Equal(t, "target-rcon-secret", targetSettings["rcon_password"])
+
+	// Verify target's world is preserved
+	assertFileContents(t, filepath.Join(target.SavesDir, target.Savefile), "target world")
+}
+
+func TestApplyGlobalProfilePerformsRealConfigAndModChanges(t *testing.T) {
+	env := setupProfileTest(t)
+	require.NoError(t, os.Remove(filepath.Join(env.active["mods"], "current_1.0.0.zip")))
+	require.NoError(t, InitializeProfiles())
+
+	// Create a preset with specific settings
+	require.NoError(t, os.WriteFile(filepath.Join(env.active["config"], "server-settings.json"), []byte(`{"name":"Preset Game","max_players":42,"autosave_interval":30}`), 0600))
+	globalState, err := CreateGlobalProfile("Config test preset", "")
+	require.NoError(t, err)
+	global := findProfileByName(t, globalState, "Config test preset")
+	require.True(t, global.IsGlobal)
+
+	// Install manager and get the target server
+	serverID, manager := installTestServerManager(t)
+	target, ok := manager.GetServer(serverID)
+	require.True(t, ok)
+	target.Version = Version{2, 1, 14}
+	target.SavesDir = filepath.Join(env.root, "target-saves")
+	target.ModsDir = filepath.Join(env.root, "target-mods")
+	target.ConfigDir = filepath.Join(env.root, "target-config")
+	require.NoError(t, os.MkdirAll(target.SavesDir, 0700))
+	require.NoError(t, os.MkdirAll(target.ModsDir, 0700))
+	require.NoError(t, os.MkdirAll(target.ConfigDir, 0700))
+	target.Savefile = "target.zip"
+	require.NoError(t, os.WriteFile(filepath.Join(target.SavesDir, target.Savefile), []byte("target world"), 0600))
+	// Target has different settings before preset application
+	require.NoError(t, os.WriteFile(filepath.Join(target.ConfigDir, "server-settings.json"), []byte(`{"name":"Target Game","max_players":5,"autosave_interval":10}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(target.ModsDir, "mod-list.json"), []byte(`{"mods":[{"name":"base","enabled":true},{"name":"core","enabled":true}]}`), 0600))
+
+	// Apply preset to target
+	_, err = ApplyGlobalProfileToServer(target.ID, global.ID)
+	require.NoError(t, err)
+
+	// Verify target's config was actually changed by the preset
+	var targetSettings map[string]interface{}
+	require.NoError(t, readBackupJSON(filepath.Join(target.ConfigDir, "server-settings.json"), &targetSettings))
+	// max_players should now be 42 (from preset), not 5 (original)
+	require.Equal(t, float64(42), targetSettings["max_players"])
+	// autosave_interval should now be 30 (from preset), not 10 (original)
+	require.Equal(t, float64(30), targetSettings["autosave_interval"])
+}
+
+func TestApplyGlobalProfileRollbackOnModValidationFailure(t *testing.T) {
+	env := setupProfileTest(t)
+	require.NoError(t, os.Remove(filepath.Join(env.active["mods"], "current_1.0.0.zip")))
+	require.NoError(t, InitializeProfiles())
+
+	// Create a preset with an incompatible mod by manually constructing the preset directory
+	// (CreateGlobalProfile validates mods, so we bypass that to create an intentionally incompatible preset)
+	presetID := "incompatible-preset"
+	presetRoot := filepath.Join(env.root, "profiles", presetID)
+	require.NoError(t, os.MkdirAll(filepath.Join(presetRoot, "mods"), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(presetRoot, "config"), 0700))
+	// Write an incompatible mod (requires 2.2, target is 2.1.14)
+	writeMergeMod(t, presetRoot, "future-mod", "1.0.0", "base >= 2.2")
+	require.NoError(t, os.WriteFile(filepath.Join(presetRoot, "mods", "mod-list.json"), []byte(`{"mods":[{"name":"base","enabled":true},{"name":"core","enabled":true},{"name":"future-mod","enabled":true}]}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(presetRoot, "config", "server-settings.json"), []byte(`{"max_players":42}`), 0600))
+	// Register the preset in the manifest
+	manifest, err := loadProfileManifest()
+	require.NoError(t, err)
+	manifest.Profiles = append(manifest.Profiles, Profile{
+		ID:             presetID,
+		Name:           "Incompatible mod preset",
+		IsGlobal:       true,
+		PresetOnly:     true,
+		InstalledVersion: "2.1.14",
+		GameMode:       "factorio",
+	})
+	require.NoError(t, saveProfileManifest(manifest))
+
+	// Install manager and get the target server (running 2.1.14, which is < 2.2)
+	serverID, manager := installTestServerManager(t)
+	target, ok := manager.GetServer(serverID)
+	require.True(t, ok)
+	target.Version = Version{2, 1, 14}
+	target.SavesDir = filepath.Join(env.root, "target-saves")
+	target.ModsDir = filepath.Join(env.root, "target-mods")
+	target.ConfigDir = filepath.Join(env.root, "target-config")
+	require.NoError(t, os.MkdirAll(target.SavesDir, 0700))
+	require.NoError(t, os.MkdirAll(target.ModsDir, 0700))
+	require.NoError(t, os.MkdirAll(target.ConfigDir, 0700))
+	target.Savefile = "target.zip"
+	require.NoError(t, os.WriteFile(filepath.Join(target.SavesDir, target.Savefile), []byte("target world"), 0600))
+	// Target has original settings
+	require.NoError(t, os.WriteFile(filepath.Join(target.ConfigDir, "server-settings.json"), []byte(`{"name":"Target Game","max_players":5}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(target.ModsDir, "mod-list.json"), []byte(`{"mods":[{"name":"base","enabled":true},{"name":"core","enabled":true}]}`), 0600))
+
+	// Apply preset - should fail because future-mod requires 2.2 but target is 2.1.14
+	_, err = ApplyGlobalProfileToServer(target.ID, presetID)
+	require.Error(t, err, "applying a preset with incompatible mods should fail")
+
+	// Verify target's config was NOT changed (rollback worked)
+	var targetSettings map[string]interface{}
+	require.NoError(t, readBackupJSON(filepath.Join(target.ConfigDir, "server-settings.json"), &targetSettings))
+	require.Equal(t, float64(5), targetSettings["max_players"])
+
+	// Verify target's mods were NOT changed (rollback worked)
+	modListContent, err := os.ReadFile(filepath.Join(target.ModsDir, "mod-list.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(modListContent), "future-mod")
+
+	// Verify target's world is still intact
+	assertFileContents(t, filepath.Join(target.SavesDir, target.Savefile), "target world")
 }

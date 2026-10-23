@@ -143,6 +143,67 @@ func ListSaves(w http.ResponseWriter, r *http.Request) {
 	resp = savesList
 }
 
+// ListServerSavesHandler lists all save files for a specific server.
+func ListServerSavesHandler(w http.ResponseWriter, r *http.Request) {
+	var resp interface{}
+	defer func() {
+		WriteResponse(w, resp)
+	}()
+
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+
+	serverID := mux.Vars(r)["serverID"]
+	manager, err := factorio.InitServerManager()
+	if err != nil {
+		resp = fmt.Sprintf("Server manager not initialized: %s", err)
+		log.Println(resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	server, ok := manager.GetServer(serverID)
+	if !ok {
+		resp = fmt.Sprintf("Server %s not found", serverID)
+		log.Println(resp)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	latestParam := r.URL.Query().Get("latest")
+	var withLatest bool
+	if latestParam != "" {
+		var err error
+		withLatest, err = strconv.ParseBool(latestParam)
+		if err != nil {
+			resp = fmt.Sprintf("Error parsing latestParam: %s", err)
+			log.Println(resp)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+	}
+
+	savesList, err := factorio.ListSavesForDir(server.SavesDir)
+	if err != nil {
+		resp = fmt.Sprintf("Error listing save files: %s", err)
+		log.Println(resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if withLatest && len(savesList) != 0 {
+		latestSave, err := factorio.GetLatestSaveForDir(server.SavesDir)
+		if err != nil {
+			resp = fmt.Sprintf("Error getting latest save: %s", err)
+			log.Println(resp)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		latestSave.Name = fmt.Sprintf("Load Latest (%s)", latestSave.Name)
+		savesList = append(savesList, latestSave)
+	}
+
+	resp = savesList
+}
+
 func DLSave(w http.ResponseWriter, r *http.Request) {
 	config := bootstrap.GetConfig()
 	save, err := factorio.FindSave(mux.Vars(r)["save"])
@@ -374,6 +435,46 @@ func LogTail(w http.ResponseWriter, r *http.Request) {
 	resp, err = factorio.TailLog()
 	if err != nil {
 		resp = fmt.Sprintf("Could not tail %s: %s", config.FactorioLog, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+}
+
+// LogTailScopedHandler returns the tail of the log for a specific server.
+func LogTailScopedHandler(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var resp interface{}
+
+	defer func() {
+		WriteResponse(w, resp)
+	}()
+
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+
+	config := bootstrap.GetConfig()
+	serverID := mux.Vars(r)["serverID"]
+	manager, err := factorio.InitServerManager()
+	if err != nil {
+		resp = fmt.Sprintf("Server manager not initialized: %s", err)
+		log.Println(resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	server, ok := manager.GetServer(serverID)
+	if !ok {
+		resp = fmt.Sprintf("Server %s not found", serverID)
+		log.Println(resp)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	logFile := config.ConsoleLogFile
+	if server.ConfigDir != "" {
+		logFile = filepath.Join(filepath.Dir(server.ConfigDir), "console.log")
+	}
+	resp, err = factorio.TailLogForFile(logFile)
+	if err != nil {
+		resp = fmt.Sprintf("Could not tail log for server %s: %s", serverID, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -1042,6 +1143,36 @@ func GetServerSettings(w http.ResponseWriter, r *http.Request) {
 	resp = serverSettingsForRequest(server.SettingsSnapshot(), requestUserIsAdministrator(r))
 
 	log.Printf("Sent server settings response")
+}
+
+// GetServerSettingsScopedHandler returns settings for a specific server.
+func GetServerSettingsScopedHandler(w http.ResponseWriter, r *http.Request) {
+	var resp interface{}
+
+	defer func() {
+		WriteResponse(w, resp)
+	}()
+
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+
+	serverID := mux.Vars(r)["serverID"]
+	manager, err := factorio.InitServerManager()
+	if err != nil {
+		resp = fmt.Sprintf("Server manager not initialized: %s", err)
+		log.Println(resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	server, ok := manager.GetServer(serverID)
+	if !ok {
+		resp = fmt.Sprintf("Server %s not found", serverID)
+		log.Println(resp)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	resp = serverSettingsForRequest(server.SettingsSnapshot(), requestUserIsAdministrator(r))
+	log.Printf("Sent server settings response for server %s", serverID)
 }
 
 // serverSettingsForRequest keeps read-only operational settings visible to

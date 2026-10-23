@@ -10,6 +10,7 @@ import (
 
 	"github.com/OpenFactorioServerManager/factorio-server-manager/bootstrap"
 	"github.com/OpenFactorioServerManager/factorio-server-manager/factorio"
+	"github.com/gorilla/mux"
 )
 
 func CreateNewMods(w http.ResponseWriter) (modList factorio.Mods, resp interface{}, err error) {
@@ -53,6 +54,44 @@ func ListInstalledModsHandler(w http.ResponseWriter, r *http.Request) {
 
 	modList, resp, err := CreateNewMods(w)
 	if err != nil {
+		return
+	}
+
+	resp = modList.ListInstalledMods().ModsResult
+}
+
+// ListServerModsHandler lists installed mods for a specific server.
+func ListServerModsHandler(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var resp interface{}
+
+	defer func() {
+		WriteResponse(w, resp)
+	}()
+
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+
+	serverID := mux.Vars(r)["serverID"]
+	manager, err := factorio.InitServerManager()
+	if err != nil {
+		resp = fmt.Sprintf("Server manager not initialized: %s", err)
+		log.Println(resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	server, ok := manager.GetServer(serverID)
+	if !ok {
+		resp = fmt.Sprintf("Server %s not found", serverID)
+		log.Println(resp)
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	modList, err := factorio.NewMods(server.ModsDir)
+	if err != nil {
+		resp = fmt.Sprintf("Error creating mods object: %s", err)
+		log.Println(resp)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 

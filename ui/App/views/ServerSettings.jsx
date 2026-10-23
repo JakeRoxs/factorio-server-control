@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from "react";
+import {useSearchParams} from "react-router-dom";
 import {useForm} from "react-hook-form";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faFloppyDisk, faLock, faMap, faNetworkWired, faPowerOff, faServer} from "@fortawesome/free-solid-svg-icons";
@@ -26,6 +27,8 @@ const {mapSnapshotFormValues, mapSnapshotRequestValues} = mapSnapshotSettingsHel
 const humanize = key => key.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 
 const ServerSettings = ({serverStatus, canManage = false}) => {
+    const [searchParams] = useSearchParams();
+    const serverID = searchParams.get("server") || null;
     const {activeProfile, applyProfileState} = useProfiles();
     const [settings, setSettings] = useState(null);
     const [modPortalDirty, setModPortalDirty] = useState(false);
@@ -79,7 +82,9 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
         setIsLoading(true);
         setSettingsLoadError("");
         try {
-            const result = await settingsResource.server.list();
+            const result = serverID
+                ? await settingsResource.server.listForServer(serverID)
+                : await settingsResource.server.list();
             setSettings(result);
             reset(result);
             return result;
@@ -89,7 +94,7 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
         } finally {
             setIsLoading(false);
         }
-    }, [reset]);
+    }, [reset, serverID]);
 
     const fetchStartup = useCallback(async () => {
         if (!activeProfile) return;

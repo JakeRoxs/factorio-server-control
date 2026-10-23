@@ -10,4 +10,13 @@ export default {
         }
         return response.data;
     },
+    tailForServer: async (serverID) => {
+        const response = await client.get(`/api/servers/${serverID}/log/tail`);
+        if (!Array.isArray(response.data)) {
+            throw new Error(typeof response.data === "string"
+                ? response.data
+                : "The log endpoint returned an unexpected response.");
+        }
+        return response.data;
+    },
 }

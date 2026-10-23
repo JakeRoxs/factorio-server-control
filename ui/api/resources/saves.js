@@ -9,6 +9,14 @@ export default {
         });
         return response.data;
     },
+    listForServer: async (serverID, latest) => {
+        const response = await client.get(`/api/servers/${serverID}/saves/list`, {
+            params: {
+                latest
+            }
+        });
+        return response.data;
+    },
     delete: async (save) => {
         const response = await client.delete(`/api/saves/rm/${encodeURIComponent(save.name)}`);
         return response.data;

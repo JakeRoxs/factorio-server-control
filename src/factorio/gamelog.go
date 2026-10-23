@@ -19,6 +19,10 @@ func TailLog() ([]string, error) {
 	return tailAndRedactLog(bootstrap.GetConfig().FactorioLog, logTailLimit)
 }
 
+func TailLogForFile(path string) ([]string, error) {
+	return tailAndRedactLog(path, logTailLimit)
+}
+
 func tailAndRedactLog(path string, limit int) ([]string, error) {
 	if limit <= 0 {
 		return []string{}, nil

@@ -6,6 +6,10 @@ export default {
             const response = await client.get('/api/settings')
             return response.data;
         },
+        listForServer: async (serverID) => {
+            const response = await client.get(`/api/servers/${serverID}/settings`);
+            return response.data;
+        },
         update: async data => {
             const response = await client.post('/api/settings/update', data)
             return response.data;

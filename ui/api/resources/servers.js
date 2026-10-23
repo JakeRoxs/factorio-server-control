@@ -68,5 +68,9 @@ export default {
     applyGlobalProfile: async (serverID, profileID) => {
         const response = await client.post(`/api/servers/${serverID}/profiles/${profileID}/apply`);
         return response.data;
+    },
+    createWorld: async (serverID, request) => {
+        const response = await client.post(`/api/servers/${serverID}/saves/generation/create`, request);
+        return response.data;
     }
 };

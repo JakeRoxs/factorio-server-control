@@ -2,14 +2,17 @@ import React, {useCallback, useEffect, useState} from "react";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
     faPlay, faStop, faTrash, faSave, faPlus, faServer, faEdit,
-    faLayerGroup, faDownload, faCheck, faSpinner
+    faLayerGroup, faDownload, faCheck, faSpinner, faHardDrive, faPuzzlePiece, faCog, faFileLines
 } from "@fortawesome/free-solid-svg-icons";
 import serversResource from "../../api/resources/servers";
 import profilesResource from "../../api/resources/profiles";
+import socket from "../../api/socket";
 import PageHeader from "../components/PageHeader";
 import Panel from "../components/Panel";
 import Button from "../components/Button";
 import Alert from "../components/Alert";
+import ConfirmDialog from "../components/ConfirmDialog";
+import NewWorldForm from "./Saves/components/NewWorldForm";
 
 const Servers = ({canManage = false, serverStatus = {known: false}}) => {
     const [servers, setServers] = useState([]);
@@ -18,12 +21,15 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [editingServer, setEditingServer] = useState(null);
     const [showGlobalProfiles, setShowGlobalProfiles] = useState(false);
+    const [worldTargetServerID, setWorldTargetServerID] = useState(null);
+    const [serverStatuses, setServerStatuses] = useState({});
     const [serverProfiles, setServerProfiles] = useState({});
     const [globalProfiles, setGlobalProfiles] = useState([]);
     const [isLoadingProfiles] = useState(false);
     const [createGlobalProfile, setCreateGlobalProfile] = useState({name: "", description: ""});
     const [profileSourceID, setProfileSourceID] = useState("1");
     const [showCreateGlobalForm, setShowCreateGlobalForm] = useState(false);
+    const [pendingApply, setPendingApply] = useState(null);
     const [createForm, setCreateForm] = useState({
         name: "",
         version: "stable",
@@ -68,6 +74,26 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
         loadServers();
         if (canManage) loadGlobalProfiles();
     }, [loadServers, loadGlobalProfiles, canManage]);
+
+    // Subscribe to per-server status rooms
+    useEffect(() => {
+        const handlers = [];
+        servers.forEach(server => {
+            const room = `servers:${server.id}:status`;
+            const handler = (status) => {
+                setServerStatuses(prev => ({...prev, [server.id]: status}));
+            };
+            handlers.push({room, handler});
+            socket.on(room, handler);
+            socket.emit("server status:subscribe", {serverID: server.id});
+        });
+        return () => {
+            handlers.forEach(({room, handler}) => socket.off(room, handler));
+            servers.forEach(server => {
+                socket.emit("server status:unsubscribe", {serverID: server.id});
+            });
+        };
+    }, [servers.map(s => s.id).join(",")]);
 
     const handleStartServer = async (server) => {
         try {
@@ -330,13 +356,39 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
                 </>}/>
             )}
 
+            {worldTargetServerID && (
+                <Panel className="mb-4" content={<>
+                    <div className="flex items-center justify-between mb-3">
+                        <h3>
+                            Create world for{" "}
+                            {servers.find(s => s.id === worldTargetServerID)?.name || `Server ${worldTargetServerID}`}
+                        </h3>
+                        <Button size="sm" variant="secondary" onClick={() => setWorldTargetServerID(null)}>
+                            Cancel
+                        </Button>
+                    </div>
+                    <NewWorldForm
+                        serverID={worldTargetServerID}
+                        onSuccess={() => {
+                            setWorldTargetServerID(null);
+                            loadServers();
+                        }}
+                    />
+                </>}/>
+            )}
+
             <div className="space-y-4">
                 {servers.map(entry => {
-                    const server = serverStatus.known && serverStatus.id === entry.id
-                        ? {...entry, ...serverStatus, name: entry.name, use_mimalloc: entry.use_mimalloc,
-                            base_mod_version: entry.base_mod_version || serverStatus.base_mod_version,
-                            fac_version: entry.fac_version || serverStatus.fac_version}
-                        : entry;
+                    const perServerStatus = serverStatuses[entry.id];
+                    const server = perServerStatus
+                        ? {...entry, ...perServerStatus, name: entry.name, use_mimalloc: entry.use_mimalloc,
+                            base_mod_version: entry.base_mod_version || perServerStatus.base_mod_version,
+                            fac_version: entry.fac_version || perServerStatus.fac_version}
+                        : (serverStatus.known && serverStatus.id === entry.id
+                            ? {...entry, ...serverStatus, name: entry.name, use_mimalloc: entry.use_mimalloc,
+                                base_mod_version: entry.base_mod_version || serverStatus.base_mod_version,
+                                fac_version: entry.fac_version || serverStatus.fac_version}
+                            : entry);
                     const profiles = serverProfiles[server.id] || [];
                     return (
                         <Panel key={server.id} content={<>
@@ -352,6 +404,9 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
                                             </span>
                                         </p>
                                         <p className="text-xs text-gray-400">Engine: {server.base_mod_version || server.fac_version || "Unknown"} (shared installation)</p>
+                                        {server.savefile && (
+                                            <p className="text-xs text-gray-400">Save: {server.savefile}</p>
+                                        )}
                                         {server.profile_id && (
                                             <p className="text-xs text-gray-400">
                                                 Profile: {profiles.find(p => p.id === server.profile_id)?.name || server.profile_id}
@@ -376,6 +431,23 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
                                                 </Button>
                                             </>
                                         )}
+                                        {!server.running && (
+                                            <Button size="sm" variant="secondary" onClick={() => setWorldTargetServerID(server.id)}>
+                                                <FontAwesomeIcon icon={faPlus}/> Create World
+                                            </Button>
+                                        )}
+                                        <Button size="sm" variant="secondary" onClick={() => window.location.href = `/saves?server=${server.id}`}>
+                                            <FontAwesomeIcon icon={faHardDrive}/> Saves
+                                        </Button>
+                                        <Button size="sm" variant="secondary" onClick={() => window.location.href = `/mods?server=${server.id}`}>
+                                            <FontAwesomeIcon icon={faPuzzlePiece}/> Mods
+                                        </Button>
+                                        <Button size="sm" variant="secondary" onClick={() => window.location.href = `/server-settings?server=${server.id}`}>
+                                            <FontAwesomeIcon icon={faCog}/> Settings
+                                        </Button>
+                                        <Button size="sm" variant="secondary" onClick={() => window.location.href = `/logs?server=${server.id}`}>
+                                            <FontAwesomeIcon icon={faFileLines}/> Logs
+                                        </Button>
                                         {!editingServer || editingServer.id !== server.id ? (
                                             <Button size="sm" variant="secondary" onClick={() => setEditingServer({
                                                 ...server,
@@ -455,7 +527,7 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
                                                         </Button>
                                                     )}
                                                     {p.is_global && (
-                                                        <Button size="xs" variant="link" onClick={() => handleApplyGlobalProfile(server.id, p.id)}>
+                                                        <Button size="xs" variant="link" onClick={() => setPendingApply({serverID: server.id, serverName: server.name || `Server ${server.id}`, profileID: p.id, profileName: p.name})}>
                                                             <FontAwesomeIcon icon={faDownload}/> Apply
                                                         </Button>
                                                     )}
@@ -469,6 +541,23 @@ const Servers = ({canManage = false, serverStatus = {known: false}}) => {
                     );
                 })}
             </div>
+
+            {pendingApply && (
+                <ConfirmDialog
+                    isOpen={Boolean(pendingApply)}
+                    title="Apply profile preset"
+                    message={<>
+                        <p>Apply preset <strong>{pendingApply.profileName}</strong> to <strong>{pendingApply.serverName}</strong>?</p>
+                        <p className="text-sm text-gray-500 mt-2">The server's saved world will be preserved. Only mods and settings from the preset will be applied.</p>
+                    </>}
+                    confirmLabel="Apply preset"
+                    onConfirm={async () => {
+                        await handleApplyGlobalProfile(pendingApply.serverID, pendingApply.profileID);
+                        setPendingApply(null);
+                    }}
+                    onCancel={() => setPendingApply(null)}
+                />
+            )}
         </div>
     );
 };

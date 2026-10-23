@@ -5,6 +5,10 @@ const mods = {
         const response = await client.get('/api/mods/list');
         return response.data;
     },
+    installedForServer: async (serverID) => {
+        const response = await client.get(`/api/servers/${serverID}/mods/list`);
+        return response.data;
+    },
     toggle: async name => {
         const response = await client.post('/api/mods/toggle', {name});
         return response.data;

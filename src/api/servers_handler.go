@@ -378,3 +378,50 @@ func SaveServerHandler(w http.ResponseWriter, r *http.Request) {
 		"result": result,
 	}
 }
+
+func CreateServerWorldHandler(w http.ResponseWriter, r *http.Request) {
+	var resp interface{}
+	defer func() { WriteResponse(w, resp) }()
+	setJSON(w)
+
+	id := mux.Vars(r)["serverID"]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		resp = "server id is required"
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorldGenerationRequestSize)
+	var request factorio.WorldGenerationRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		resp = fmt.Sprintf("Unable to parse world settings: %s", err)
+		return
+	}
+	if err := decoder.Decode(new(interface{})); err != io.EOF {
+		w.WriteHeader(http.StatusBadRequest)
+		resp = "Unable to parse world settings: request must contain one JSON object"
+		return
+	}
+	if err := factorio.ValidateWorldGenerationRequest(request, false); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		resp = fmt.Sprintf("Invalid world settings: %s", err)
+		return
+	}
+	save, err := factorio.CreateServerWorld(id, request)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, factorio.ErrWorldGenerationBusy), errors.Is(err, factorio.ErrSaveAlreadyExists):
+			status = http.StatusConflict
+		case errors.Is(err, factorio.ErrFactorioMustBeStopped):
+			status = http.StatusLocked
+		}
+		w.WriteHeader(status)
+		resp = fmt.Sprintf("Unable to create world for server %s: %s", id, err)
+		return
+	}
+	resp = save
+}

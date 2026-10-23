@@ -1,6 +1,9 @@
 package factorio
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,4 +132,129 @@ func TestServerRunRejectsConcurrentWorldGeneration(t *testing.T) {
 func TestCloseRconWithoutConnection(t *testing.T) {
 	server := &Server{}
 	require.NotPanics(t, server.closeRcon)
+}
+
+func TestCreateServerWorldRejectsMissingServerManager(t *testing.T) {
+	serverManagerMu.Lock()
+	previous := serverManager
+	serverManager = nil
+	serverManagerMu.Unlock()
+	defer func() {
+		serverManagerMu.Lock()
+		serverManager = previous
+		serverManagerMu.Unlock()
+	}()
+
+	_, err := CreateServerWorld("1", WorldGenerationRequest{Preset: "default", Seed: 42})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "server manager is not initialized")
+}
+
+func TestCreateServerWorldRejectsUnknownServerID(t *testing.T) {
+	env, manager := setupRuntimeManager(t)
+	_ = env
+	serverManagerMu.Lock()
+	previous := serverManager
+	serverManager = manager
+	serverManagerMu.Unlock()
+	defer func() {
+		serverManagerMu.Lock()
+		serverManager = previous
+		serverManagerMu.Unlock()
+	}()
+
+	_, err := CreateServerWorld("nonexistent", WorldGenerationRequest{Preset: "default", Seed: 42})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+}
+
+func TestCreateServerWorldRejectsRunningServer(t *testing.T) {
+	env, manager := setupRuntimeManager(t)
+	_ = env
+	serverManagerMu.Lock()
+	previous := serverManager
+	serverManager = manager
+	serverManagerMu.Unlock()
+	defer func() {
+		serverManagerMu.Lock()
+		serverManager = previous
+		serverManagerMu.Unlock()
+	}()
+
+	server := GetFactorioServer()
+	stateMutex.Lock()
+	server.Running = true
+	stateMutex.Unlock()
+	defer func() {
+		stateMutex.Lock()
+		server.Running = false
+		stateMutex.Unlock()
+	}()
+
+	_, err := CreateServerWorld(DefaultServerID, WorldGenerationRequest{Preset: "default", Seed: 42})
+	require.ErrorIs(t, err, ErrFactorioMustBeStopped)
+}
+
+func TestCreateServerWorldWritesToServerSpecificSavesDir(t *testing.T) {
+	env, manager := setupRuntimeManager(t)
+	_ = env
+	serverManagerMu.Lock()
+	previous := serverManager
+	serverManager = manager
+	serverManagerMu.Unlock()
+	defer func() {
+		serverManagerMu.Lock()
+		serverManager = previous
+		serverManagerMu.Unlock()
+	}()
+
+	// Create a second server to verify isolation
+	server2, err := manager.CreateServer("Second Server", "stable", "127.0.0.1", 34198, false)
+	require.NoError(t, err)
+
+	// Verify the SavesDir for the second server
+	require.True(t, strings.HasSuffix(server2.SavesDir, filepath.Join("servers", server2.ID, "saves")),
+		"SavesDir should be server-specific")
+
+	// Verify the first server's SavesDir is different
+	server1, ok := manager.GetServer(DefaultServerID)
+	require.True(t, ok)
+	require.NotEqual(t, server1.SavesDir, server2.SavesDir)
+
+	// Create a fake save in server 1's directory to verify isolation
+	require.NoError(t, os.WriteFile(filepath.Join(server1.SavesDir, "existing.zip"), []byte("server 1 save"), 0600))
+
+	// Create a world for server 2 (will fail without Factorio binary, but
+	// we can verify it doesn't touch server 1's saves directory)
+	_, err = CreateServerWorld(server2.ID, WorldGenerationRequest{Preset: "default", Seed: 123, Name: "new-world"})
+	// The error is expected because Factorio binary may not be available,
+	// but the key assertion is that server 1's save is unchanged.
+
+	// Verify server 1's save is unchanged
+	contents, err := os.ReadFile(filepath.Join(server1.SavesDir, "existing.zip"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("server 1 save"), contents)
+}
+
+func TestCreateServerWorldRejectsDuplicateSaveName(t *testing.T) {
+	_, manager := setupRuntimeManager(t)
+	serverManagerMu.Lock()
+	previous := serverManager
+	serverManager = manager
+	serverManagerMu.Unlock()
+	defer func() {
+		serverManagerMu.Lock()
+		serverManager = previous
+		serverManagerMu.Unlock()
+	}()
+
+	// Create a second server so we have a working SavesDir
+	server2, err := manager.CreateServer("Second Server", "stable", "127.0.0.1", 34198, false)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(server2.SavesDir, "existing.zip"), []byte("existing"), 0600))
+	defer os.Remove(filepath.Join(server2.SavesDir, "existing.zip"))
+
+	_, err = CreateServerWorld(server2.ID, WorldGenerationRequest{Preset: "default", Seed: 42, Name: "existing.zip"})
+	require.ErrorIs(t, err, ErrSaveAlreadyExists)
 }

@@ -555,6 +555,36 @@ var apiRoutes = Routes{
 		SaveServerHandler,
 		false,
 	}, {
+		"CreateServerWorld",
+		"POST",
+		"/servers/{serverID}/saves/generation/create",
+		CreateServerWorldHandler,
+		true,
+	}, {
+		"ListServerSaves",
+		"GET",
+		"/servers/{serverID}/saves/list",
+		ListServerSavesHandler,
+		false,
+	}, {
+		"ListServerMods",
+		"GET",
+		"/servers/{serverID}/mods/list",
+		ListServerModsHandler,
+		false,
+	}, {
+		"GetServerSettingsScoped",
+		"GET",
+		"/servers/{serverID}/settings",
+		GetServerSettingsScopedHandler,
+		false,
+	}, {
+		"LogTailScoped",
+		"GET",
+		"/servers/{serverID}/log/tail",
+		LogTailScopedHandler,
+		false,
+	}, {
 		"StartServerByID",
 		"POST",
 		"/servers/{serverID}/start",

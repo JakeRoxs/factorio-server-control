@@ -58,6 +58,30 @@ test("websocket reconnect restores current rooms once, never queued commands", (
     assert.equal(timers.size, 0);
 });
 
+test("websocket reconnect restores per-server status rooms", () => {
+    const {bus, connections, timers, runTimer} = setup();
+    // Subscribe to per-server status rooms
+    bus.emit("server status:subscribe", {serverID: "1"});
+    bus.emit("server status:subscribe", {serverID: "2"});
+    bus.connect();
+    connections[0].open();
+    // Verify initial subscriptions
+    const initialSubs = connections[0].sent.filter(m => m.controls?.type === "subscribe");
+    assert.equal(initialSubs.length, 2);
+    assert.ok(initialSubs.some(m => m.controls.value === "servers:1:status"));
+    assert.ok(initialSubs.some(m => m.controls.value === "servers:2:status"));
+    // Disconnect and reconnect
+    connections[0].finishClose();
+    runTimer();
+    connections[1].open();
+    // Verify per-server rooms are restored
+    const reconnectSubs = connections[1].sent.filter(m => m.controls?.type === "subscribe");
+    assert.equal(reconnectSubs.length, 2);
+    assert.ok(reconnectSubs.some(m => m.controls.value === "servers:1:status"));
+    assert.ok(reconnectSubs.some(m => m.controls.value === "servers:2:status"));
+    bus.disconnect();
+});
+
 test("callbacks from an obsolete connection cannot close or overwrite its replacement", () => {
     const {bus, connections, WebSocket} = setup();
     const states = [], logs = [];
