@@ -131,6 +131,9 @@ test("running-server allocator preference survives navigation and reload without
     await expect.poll(() => enabled).toBe(true);
     await navigate(page, "Overview");
     await navigate(page, "Server settings");
+    // Drain synthetic fixture requests before reload; WebKit fires
+    // cancelled-XHR pageerrors for in-flight fetches aborted by document reload.
+    await page.waitForLoadState("networkidle");
     await page.reload();
     await expect(page.getByRole("checkbox", {name: "Use mimalloc memory allocator (Linux only)"})).toBeChecked();
     expect(mutations).toHaveLength(1);
@@ -234,6 +237,9 @@ test("a missing page chunk retains navigation and offers an explicit reload", as
     await expect(page.getByRole("heading", {level: 1, name: "Saves & checkpoints"})).toBeVisible();
     await page.unroute("**/chunks/logs.*.js");
     await navigate(page, "Logs");
+    // Drain synthetic fixture requests before reload; WebKit fires
+    // cancelled-XHR pageerrors for in-flight fetches aborted by document reload.
+    await page.waitForLoadState("networkidle");
     await page.getByRole("button", {name: "Reload page"}).click();
     await expect(page.getByRole("heading", {level: 1, name: "Factorio logs"})).toBeVisible();
     await expect(page.getByText("Synthetic test log", {exact: false})).toBeVisible();
