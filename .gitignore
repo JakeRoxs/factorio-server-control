@@ -34,3 +34,4 @@ mix-manifest.json
 # Keep the sanitized native deployment examples in the fork.
 !deploy/factorio-server-manager.service
 !deploy/conf.example.json
+*.code-workspace
