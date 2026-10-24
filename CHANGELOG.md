@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Move the mimalloc preference into the server's startup settings instead of a separate server-card option, and use explicit server-scoped HTTP status, log and console requests rather than the unsupported per-server WebSocket subscriptions.
 
 ### Fixed
+- Detect and use mimalloc v3 (`libmimalloc.so.3`) first with v2 fallback, ensuring compatibility with Ubuntu 26.04 where `libmimalloc2.0` is unavailable. Update production and local Docker images to install `libmimalloc3`.
 - Hydrate additional runtimes from their own persistent settings/admin files and the actual shared-engine metadata, create private defaults instead of inheriting Server 1's identity, and preserve their selected save across recreation. Validate catalog IDs, retain orphaned data without reassigning it, and roll back failed runtime creation/deletion.
 - Pass dedicated mod/config paths to child processes, write native-compatible compact INI path keys, and publish connected state with the installed RCON console. Keep secondary lifecycle actions, logs and status out of the default server's checkpoint/feed paths; require all games stopped before shared-engine replacement. Concurrent Windows launch fails closed pending isolated console control.
 - Allow administrator-only live RCON saves without a contradictory stopped-server guard, consume watchdog probe responses before the next command, and use instance-owned files for managed settings updates.

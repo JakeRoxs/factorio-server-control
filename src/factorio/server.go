@@ -1013,20 +1013,7 @@ func (server *Server) runStartSnapshot(snapshot serverStartSnapshot, releaseStar
 
 	// Inject mimalloc memory allocator via LD_PRELOAD if enabled for this server
 	if snapshot.UseMimalloc && runtime.GOOS == "linux" {
-		mimallocPath := os.Getenv("FSM_MIMALLOC_PATH")
-		if mimallocPath == "" {
-			// Try common locations for the mimalloc shared library
-			for _, path := range []string{
-				"/usr/lib/x86_64-linux-gnu/libmimalloc.so.2",
-				"/usr/lib/x86_64-linux-gnu/libmimalloc.so",
-				"/usr/lib/libmimalloc.so",
-			} {
-				if _, err := os.Stat(path); err == nil {
-					mimallocPath = path
-					break
-				}
-			}
-		}
+		mimallocPath := resolveMimallocPath(os.Getenv("FSM_MIMALLOC_PATH"), defaultMimallocSearchPaths())
 		if mimallocPath != "" {
 			log.Printf("Injecting mimalloc memory allocator for server %s: %s", server.ID, mimallocPath)
 			command.Env = append(os.Environ(),
@@ -1166,6 +1153,31 @@ func (server *Server) checkLogError(logline []string) error {
 	log.Println(logline)
 
 	return nil
+}
+
+// resolveMimallocPath returns the first existing mimalloc library from the
+// candidate paths, or the explicit override if provided and non-empty.
+func resolveMimallocPath(override string, candidates []string) string {
+	if override != "" {
+		return override
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+// defaultMimallocSearchPaths returns the standard search order for the
+// mimalloc shared library, with v3 preferred over v2.
+func defaultMimallocSearchPaths() []string {
+	return []string{
+		"/usr/lib/x86_64-linux-gnu/libmimalloc.so.3",
+		"/usr/lib/x86_64-linux-gnu/libmimalloc.so.2",
+		"/usr/lib/x86_64-linux-gnu/libmimalloc.so",
+		"/usr/lib/libmimalloc.so",
+	}
 }
 
 func init() {
