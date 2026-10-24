@@ -17,6 +17,14 @@ permissions:
   contents: read
 
 jobs:
+  check-diff:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - run: git diff --check
   test-npm:
     strategy:
       matrix:
@@ -71,12 +79,16 @@ jobs:
           go test ./... -short -count=1
           go test ./factorio ./api -race -short -run 'Test(ModPackMerge|MergeModPack|ModPortalPreferences|ModPortalOptionalDefaults)' -count=1
           go test ./lockfile ./api/websocket -race -short -count=1
-          go test . ./factorio -race -short -run 'Test(Shutdown|StopAlreadyStopped|FailedStartup|InvalidStartupSettings|ParallelStart)' -count=1
+          go test . ./factorio -race -short -run 'Test(Shutdown|StopAlreadyStopped|FailedStartup|InvalidStartupSettings|ParallelStart|ConcurrentStartClaims|ParallelStartKeepsWinningRequestSnapshotAndRejectsSecondClaim)' -count=1
           go vet ./...
           go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - if: contains(matrix.os, 'windows')
         working-directory: src
-        run: go test ./... -short -count=1
+        run: |
+          go version | findstr /C:"go1.26.10 "
+          go test ./... -short -count=1
+          go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
   test-unraid-template:
     runs-on: ubuntu-latest
     steps:

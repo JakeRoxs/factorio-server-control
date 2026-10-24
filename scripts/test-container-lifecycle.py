@@ -246,13 +246,7 @@ def check_managed_runtime_boundary(manager, mode, preset, profile_id, original, 
     manager.require_owned("container", manager.name)
     manager.docker("exec", manager.name, "cp", "/opt/factorio/saves/quality-world.zip", root + "/saves/worker-world.zip")
     assign_path = "/servers/" + server_id + "/profiles/" + preset["id"] + "/assign"
-    if mode == "factorio":
-        api("POST", assign_path)
-    else:
-        # Feature-preset application is deliberately unavailable until target
-        # capability validation exists. Provision only synthetic test mod files.
-        manager.reject("POST", assign_path, status=400)
-        manager.docker("exec", manager.name, "cp", "-a", "/opt/fsm-data/profiles/" + preset["id"] + "/mods/.", root + "/mods")
+    api("POST", assign_path)
     settings = json.loads(manager.docker("exec", manager.name, "cat", root + "/config/server-settings.json"))
     check(settings["name"] == "Independent runtime" and "username" not in settings and "game_password" not in settings, "Managed settings inherited Server 1's private identity")
     check(settings["visibility"] == {"public": False, "lan": True}, "Preset changed target-local visibility")
