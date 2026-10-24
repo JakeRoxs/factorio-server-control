@@ -20,7 +20,6 @@ const api = {
     "/api/profiles": profiles,
     "/api/user/list": [{username: "demo-admin", role: "admin"}, {username: "demo-viewer", role: "viewer"}],
     "/api/saves/list": [{name: "demo.zip", size: 1234567, last_mod: "2026-01-01T12:00:00Z"}],
-    "/api/checkpoints": {settings: {interval_enabled: false, interval_minutes: 30, last_player_enabled: false, clean_stop_enabled: false, retention_count: 10}, checkpoints: []},
     "/api/map-snapshot": {settings: {enabled: true, interval_minutes: 60, automatic_only_when_no_players: false, include_space_platforms: true}, running: false, snapshot: null},
     "/api/server/autostart": {enabled: false},
     "/api/server/facVersion": {version: "2.0.77.0", base_mod_version: "2.0.77.0"},
@@ -60,6 +59,16 @@ http.createServer((req, res) => {
         if (scoped?.[2] === "") return json(selected);
         if (scoped?.[2] === "/settings") return json({...api["/api/settings"], name: serverID === "2" ? "Second world" : "Demo server"});
         if (scoped?.[2] === "/saves/list") return json([{name: serverID === "2" ? "second.zip" : "demo.zip", size: 1234567, last_mod: "2026-01-01T12:00:00Z"}]);
+        if (scoped?.[2] === "/checkpoints") return json({
+            server_id: serverID,
+            settings: {interval_enabled: false, interval_minutes: serverID === "2" ? 45 : 30, last_player_enabled: false, clean_stop_enabled: false, retention_count: 10},
+            checkpoints: scenario === "checkpoints" ? [{
+                id: "20260101T120000.000000000Z-manual",
+                file_name: "20260101T120000.000000000Z-manual.zip",
+                created_at: "2026-01-01T12:00:00Z", trigger: "manual",
+                source_save: `checkpoint-server-${serverID}.zip`, size: 1234567
+            }] : []
+        });
         if (scoped?.[2] === "/mods/list") return json([]);
         if (scoped?.[2] === "/log/tail") return json([serverID === "2" ? "Second server output" : "Synthetic test log - no real game output"]);
         if (url.pathname === "/api/saves/list" && serverID === "2") return json([{name: "second.zip", size: 7654321, last_mod: "2026-01-02T12:00:00Z"}]);

@@ -70,6 +70,30 @@ test("selected server stays consistent across mods settings logs and writes", as
     await expect(page.getByText("Synthetic test log", {exact: false})).toHaveCount(0);
 });
 
+test("checkpoints and their actions stay scoped to the selected server", async ({page}) => {
+    await page.setExtraHTTPHeaders({"x-fsm-test-scenario": "checkpoints"});
+    const creates = [];
+    page.on("request", request => {
+        if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/checkpoints")) {
+            creates.push(new URL(request.url()).pathname);
+        }
+    });
+    for (const serverID of ["1", "2"]) {
+        await page.goto(`/saves?server=${serverID}`);
+        const source = `checkpoint-server-${serverID}.zip`;
+        await expect(page.getByRole("cell", {name: source, exact: true})).toBeVisible();
+        await expect(page.getByRole("cell", {name: `checkpoint-server-${serverID === "1" ? "2" : "1"}.zip`, exact: true})).toHaveCount(0);
+        await expect(page.getByRole("link", {name: "Download checkpoint", exact: true})).toHaveAttribute(
+            "href", `/api/servers/${serverID}/checkpoints/20260101T120000.000000000Z-manual/download`
+        );
+        await expect(page.getByLabel("Interval in minutes", {exact: true})).toHaveValue(serverID === "1" ? "30" : "45");
+        await page.getByRole("button", {name: "Create checkpoint now", exact: true}).click();
+        await expect(page.getByText("Synthetic operation failed; existing data was kept.").first()).toBeVisible();
+        await expect(page.getByRole("cell", {name: source, exact: true})).toBeVisible();
+    }
+    expect(creates).toEqual(["/api/servers/1/checkpoints", "/api/servers/2/checkpoints"]);
+});
+
 test("existing running instance is visible as one managed server", async ({page}) => {
     await page.setExtraHTTPHeaders({"x-fsm-test-scenario": "running"});
     await page.goto("/servers");
