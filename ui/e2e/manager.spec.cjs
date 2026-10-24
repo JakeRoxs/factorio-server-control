@@ -40,6 +40,24 @@ async function disableNativePointerFocus(page) {
     }));
 }
 
+async function trackReloadRequests(page) {
+    const pending = new Set();
+    page.on("request", request => {
+        if (["xhr", "fetch"].includes(request.resourceType())) pending.add(request);
+    });
+    page.on("requestfinished", request => pending.delete(request));
+    page.on("requestfailed", request => pending.delete(request));
+    await page.clock.install();
+    return async () => {
+        // Stop new polls before draining actual requests. The document's
+        // historical networkidle event does not prove current requests finished.
+        // Leave enough virtual-time headroom for the protocol round trip.
+        // pauseAt advances timers once and freezes them; it does not sleep.
+        await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60000));
+        await expect.poll(() => pending.size).toBe(0);
+    };
+}
+
 const routes = [
     ["/", "Overview"], ["/saves", "Saves & checkpoints"], ["/mods", "Mods & mod packs"],
     ["/server-settings", "Server settings"], ["/game-settings", "Game settings"],
@@ -106,6 +124,7 @@ test("existing running instance is visible as one managed server", async ({page}
 
 test("running-server allocator preference survives navigation and reload without stopping the game", async ({page}) => {
     await page.setExtraHTTPHeaders({"x-fsm-test-scenario": "running"});
+    const drainBeforeReload = await trackReloadRequests(page);
     let enabled = false;
     const mutations = [];
     const server = () => ({id: "1", name: "Existing server", port: 34197, bindip: "0.0.0.0", running: true, use_mimalloc: enabled});
@@ -131,10 +150,11 @@ test("running-server allocator preference survives navigation and reload without
     await expect.poll(() => enabled).toBe(true);
     await navigate(page, "Overview");
     await navigate(page, "Server settings");
-    // Drain synthetic fixture requests before reload; WebKit fires
-    // cancelled-XHR pageerrors for in-flight fetches aborted by document reload.
-    await page.waitForLoadState("networkidle");
+    // Pause the clock and drain all in-flight requests so the reload cannot
+    // abort a status-poll XHR (WebKit reports aborted XHRs as pageerrors).
+    await drainBeforeReload();
     await page.reload();
+    await page.clock.resume();
     await expect(page.getByRole("checkbox", {name: "Use mimalloc memory allocator (Linux only)"})).toBeChecked();
     expect(mutations).toHaveLength(1);
     await expect(page.getByRole("button", {name: "Save & stop", exact: true})).toBeVisible();
@@ -230,6 +250,7 @@ test("help text remains inside the viewport when focused on a narrow screen", as
 
 test("a missing page chunk retains navigation and offers an explicit reload", async ({page}) => {
     page.expectChunkFailure = true;
+    const drainBeforeReload = await trackReloadRequests(page);
     await page.route("**/chunks/logs.*.js", route => route.fulfill({status: 404, body: ""}));
     await page.goto("/logs");
     await expect(page.getByRole("button", {name: "Reload page"})).toBeVisible();
@@ -237,10 +258,11 @@ test("a missing page chunk retains navigation and offers an explicit reload", as
     await expect(page.getByRole("heading", {level: 1, name: "Saves & checkpoints"})).toBeVisible();
     await page.unroute("**/chunks/logs.*.js");
     await navigate(page, "Logs");
-    // Drain synthetic fixture requests before reload; WebKit fires
-    // cancelled-XHR pageerrors for in-flight fetches aborted by document reload.
-    await page.waitForLoadState("networkidle");
+    // Pause the clock and drain all in-flight requests before the reload.
+    await drainBeforeReload();
     await page.getByRole("button", {name: "Reload page"}).click();
+    await page.waitForLoadState("domcontentloaded");
+    await page.clock.resume();
     await expect(page.getByRole("heading", {level: 1, name: "Factorio logs"})).toBeVisible();
     await expect(page.getByText("Synthetic test log", {exact: false})).toBeVisible();
 });
