@@ -113,6 +113,7 @@ func TestServerConfigurationHTTPRoundTripWhileRunning(t *testing.T) {
 		code int
 	}{
 		{`{"use_mimalloc":false,"port":34200}`, http.StatusLocked},
+		{`{"use_mimalloc":false,"selected_save":"world.zip"}`, http.StatusBadRequest},
 		{`{"use_mimalloc":true} {}`, http.StatusBadRequest},
 		{`{"unexpected":true}`, http.StatusBadRequest},
 		{`null`, http.StatusBadRequest},

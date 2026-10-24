@@ -65,7 +65,7 @@ const BackupRestore = ({kind = "profiles", disabled, activeProfile, onComplete})
                 {limitsFailed && <Alert type="warning">Could not check the upload limit. <Button type="ghost" size="sm" onClick={retryLimits}>Retry size check</Button></Alert>}
                 {!profiles && <p className="text-sm text-gray-light">Choose a ZIP created by Mods → Download all. Single mods use Upload archive.</p>}
                 {(fileError || error) && <Alert type="danger">{fileError || error}</Alert>}
-                {(disabled || targetChanged) && <Alert type="warning">Restore is locked. Stop Factorio and reopen this dialog for the active profile.</Alert>}
+                {(disabled || targetChanged) && <Alert type="warning">Restore is locked. Stop the selected server and reopen this dialog.</Alert>}
                 {preview && profiles && <>
                     <Alert type="info">New inactive profiles only. Existing profiles, game version and autostart stay unchanged. Passwords and account credentials are not transferred; imported servers start with public and LAN listing off.</Alert>
                     <div className="space-y-3 max-h-80 overflow-y-auto">
@@ -82,7 +82,7 @@ const BackupRestore = ({kind = "profiles", disabled, activeProfile, onComplete})
                     {!validImportSelection(selection) && <p role="status" className="text-sm text-yellow">Select at least one profile and use unique, non-empty names.</p>}
                 </>}
                 {preview && !profiles && <>
-                    <Alert type="warning">Replaces all mods and mod settings in {activeProfile?.name || "the active profile"}. Saves and the installed Factorio version stay unchanged. Download the current mods first if you need to undo this.</Alert>
+                    <Alert type="warning">Replaces all mods and mod settings in {activeProfile?.name || "the selected server"}. Saves and the installed Factorio version stay unchanged. Download the current mods first if you need to undo this.</Alert>
                     <p className="text-sm">{preview.mods.length} mod archives · {preview.game_mode} · Startup settings: {preview.has_settings ? "included" : "not included"}</p>
                     <ul className="max-h-64 overflow-y-auto space-y-1 text-sm">{preview.mods.map(mod => <li key={`${mod.name}-${mod.version}`}>
                         {mod.name} {mod.version} · Factorio {mod.factorio_version} · {mod.enabled ? "enabled" : "disabled"}

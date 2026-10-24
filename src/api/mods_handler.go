@@ -10,7 +10,6 @@ import (
 
 	"github.com/OpenFactorioServerManager/factorio-server-manager/bootstrap"
 	"github.com/OpenFactorioServerManager/factorio-server-manager/factorio"
-	"github.com/gorilla/mux"
 )
 
 func CreateNewMods(w http.ResponseWriter) (modList factorio.Mods, resp interface{}, err error) {
@@ -20,6 +19,24 @@ func CreateNewMods(w http.ResponseWriter) (modList factorio.Mods, resp interface
 		resp = fmt.Sprintf("Error creating mods object: %s", err)
 		log.Println(resp)
 		w.WriteHeader(http.StatusInternalServerError)
+	}
+	return
+}
+
+func createModsForRequest(w http.ResponseWriter, r *http.Request) (modList factorio.Mods, resp interface{}, err error) {
+	server, found := serverFromRequest(r)
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		return modList, errServerNotFound, factorio.ErrServerMissing
+	}
+	directory := server.ModsDir
+	if directory == "" {
+		directory = bootstrap.GetConfig().FactorioModsDir
+	}
+	modList, err = factorio.NewMods(directory)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp = "The selected server's mods could not be loaded"
 	}
 	return
 }
@@ -52,7 +69,7 @@ func ListInstalledModsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-	modList, resp, err := CreateNewMods(w)
+	modList, resp, err := createModsForRequest(w, r)
 	if err != nil {
 		return
 	}
@@ -71,17 +88,9 @@ func ListServerModsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-	serverID := mux.Vars(r)["serverID"]
-	manager, err := factorio.InitServerManager()
-	if err != nil {
-		resp = fmt.Sprintf("Server manager not initialized: %s", err)
-		log.Println(resp)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	server, ok := manager.GetServer(serverID)
+	server, ok := serverFromRequest(r)
 	if !ok {
-		resp = fmt.Sprintf("Server %s not found", serverID)
+		resp = errServerNotFound
 		log.Println(resp)
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -117,7 +126,7 @@ func ModToggleHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mods, resp, err := CreateNewMods(w)
+	mods, resp, err := createModsForRequest(w, r)
 	if err != nil {
 		return
 	}
@@ -155,7 +164,7 @@ func ModDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modList, resp, err := CreateNewMods(w)
+	modList, resp, err := createModsForRequest(w, r)
 	if err != nil {
 		return
 	}
@@ -223,7 +232,7 @@ func ModUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mods, resp, err := CreateNewMods(w)
+	mods, resp, err := createModsForRequest(w, r)
 	if err != nil {
 		return
 	}
@@ -272,6 +281,7 @@ func ModUploadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 
 	formFile, fileHeader, err := r.FormFile("mod_file")
 	if err != nil {
@@ -287,7 +297,7 @@ func ModUploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mods, resp, err := CreateNewMods(w)
+	mods, resp, err := createModsForRequest(w, r)
 	if err != nil {
 		return
 	}
@@ -303,7 +313,11 @@ func ModUploadHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if fileHeader.Filename == "mod-settings.dat" || fileHeader.Filename == "mod-list.json" {
-		err = factorio.SaveModConfiguration(config.FactorioModsDir, fileHeader.Filename, formFile, config.MaxUploadSize)
+		directory := config.FactorioModsDir
+		if server, found := serverFromRequest(r); found && server.ModsDir != "" {
+			directory = server.ModsDir
+		}
+		err = factorio.SaveModConfiguration(directory, fileHeader.Filename, formFile, config.MaxUploadSize)
 		if err != nil {
 			resp = fmt.Sprintf("error saving %s: %s", fileHeader.Filename, err)
 			log.Println(resp)
@@ -326,7 +340,11 @@ func ModUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 func ModDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	config := bootstrap.GetConfig()
-	if err := serveDirectoryZip(w, config.FactorioModsDir, "all_installed_mods.zip", true); err != nil {
+	directory := config.FactorioModsDir
+	if server, found := serverFromRequest(r); found && server.ModsDir != "" {
+		directory = server.ModsDir
+	}
+	if err := serveDirectoryZip(w, directory, "all_installed_mods.zip", true); err != nil {
 		log.Printf("error on walking over the mods: %s", err)
 		http.Error(w, "Unable to build mods archive", http.StatusInternalServerError)
 		return

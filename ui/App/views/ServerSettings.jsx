@@ -1,11 +1,11 @@
 import React, {useCallback, useEffect, useMemo, useState} from "react";
-import {useSearchParams} from "react-router-dom";
 import {useForm} from "react-hook-form";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faFloppyDisk, faLock, faMap, faNetworkWired, faPowerOff, faServer} from "@fortawesome/free-solid-svg-icons";
 import settingsResource from "../../api/resources/settings";
 import savesResource from "../../api/resources/saves";
 import serverResource from "../../api/resources/server";
+import serversResource from "../../api/resources/servers";
 import profilesResource from "../../api/resources/profiles";
 import PageHeader from "../components/PageHeader";
 import Panel from "../components/Panel";
@@ -18,6 +18,7 @@ import InputPassword from "../components/InputPassword";
 import Button from "../components/Button";
 import Alert from "../components/Alert";
 import ScopeBadge from "../components/ScopeBadge";
+import {useServers} from "../context/ServerContext";
 import {useProfiles} from "../context/ProfileContext";
 import mapSnapshotSettingsHelpers from "./mapSnapshotSettings.cjs";
 import ModPortalPreferences from "./ModPortalPreferences";
@@ -27,28 +28,20 @@ const {mapSnapshotFormValues, mapSnapshotRequestValues} = mapSnapshotSettingsHel
 const humanize = key => key.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 
 const ServerSettings = ({serverStatus, canManage = false}) => {
-    const [searchParams] = useSearchParams();
-    const serverID = searchParams.get("server") || null;
+    const {serverID, selectedServer, refreshServers, refreshServerStatus} = useServers();
     const {activeProfile, applyProfileState} = useProfiles();
-    const [settings, setSettings] = useState(null);
-    const [modPortalDirty, setModPortalDirty] = useState(false);
-    const [saves, setSaves] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [settingsLoadError, setSettingsLoadError] = useState("");
-    const [isSaving, setIsSaving] = useState(false);
-    const [isLoadingStartup, setIsLoadingStartup] = useState(true);
-    const [isLoadingAutostart, setIsLoadingAutostart] = useState(true);
-    const [isLoadingMapSnapshots, setIsLoadingMapSnapshots] = useState(true);
-    const [startupLoadError, setStartupLoadError] = useState("");
-    const [autostartLoadError, setAutostartLoadError] = useState("");
-    const [mapSnapshotLoadError, setMapSnapshotLoadError] = useState("");
-    const [isSavingStartup, setIsSavingStartup] = useState(false);
-    const [isSavingAutostart, setIsSavingAutostart] = useState(false);
-    const [isSavingMapSnapshots, setIsSavingMapSnapshots] = useState(false);
+    const primaryServer = serverID === "1";
+
     const locked = Boolean(!canManage || serverStatus?.known === false || serverStatus?.running || serverStatus?.stopping);
+    const processLocked = !canManage || serverStatus?.known === false || serverStatus?.stopping;
 
     const settingsForm = useForm();
-    const startupForm = useForm({defaultValues: {bind_ip: "0.0.0.0", port: 34197, selected_save: ""}});
+    const startupForm = useForm({defaultValues: {
+        bind_ip: selectedServer?.bindip || "0.0.0.0",
+        port: selectedServer?.port || 34197,
+        savefile: selectedServer?.savefile || "",
+        use_mimalloc: Boolean(selectedServer?.use_mimalloc)
+    }});
     const autostartForm = useForm({defaultValues: {enabled: false}});
     const mapSnapshotForm = useForm({defaultValues: {
         mode: "automatic",
@@ -78,6 +71,42 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
         formState: {isDirty: mapSnapshotDirty, errors: mapSnapshotErrors}
     } = mapSnapshotForm;
 
+    const [settings, setSettings] = useState(null);
+    const [settingsLoadError, setSettingsLoadError] = useState("");
+    const [modPortalDirty, setModPortalDirty] = useState(false);
+
+    const [isLoading, setIsLoading] = useState(true);
+    const [isLoadingStartup, setIsLoadingStartup] = useState(true);
+    const [isLoadingAutostart, setIsLoadingAutostart] = useState(true);
+    const [isLoadingMapSnapshots, setIsLoadingMapSnapshots] = useState(true);
+    const [startupLoadError, setStartupLoadError] = useState("");
+    const [autostartLoadError, setAutostartLoadError] = useState("");
+    const [mapSnapshotLoadError, setMapSnapshotLoadError] = useState("");
+    const [isSavingStartup, setIsSavingStartup] = useState(false);
+    const [isSavingAutostart, setIsSavingAutostart] = useState(false);
+    const [isSavingMapSnapshots, setIsSavingMapSnapshots] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [saves, setSaves] = useState([]);
+    const [startupSettings, setStartupSettings] = useState(null);
+
+    const fetchStartup = useCallback(async () => {
+        setIsLoadingStartup(true);
+        setStartupLoadError("");
+        try {
+            const [server, serverSaves] = await Promise.all([serversResource.get(serverID), savesResource.listForServer(serverID)]);
+            const values = {bind_ip: server.bindip || "0.0.0.0", port: server.port || 34197, savefile: server.savefile || "", use_mimalloc: Boolean(server.use_mimalloc)};
+            setSaves(serverSaves || []);
+            setStartupSettings(values);
+            resetStartup(values);
+        } catch (error) {
+            setSaves([]);
+            setStartupSettings(null);
+            setStartupLoadError("Startup configuration could not be loaded for this server.");
+        } finally {
+            setIsLoadingStartup(false);
+        }
+    }, [serverID, resetStartup]);
+
     const fetchSettings = useCallback(async () => {
         setIsLoading(true);
         setSettingsLoadError("");
@@ -96,30 +125,6 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
         }
     }, [reset, serverID]);
 
-    const fetchStartup = useCallback(async () => {
-        if (!activeProfile) return;
-        setIsLoadingStartup(true);
-        setStartupLoadError("");
-        try {
-            const availableSaves = await savesResource.list(false);
-            const orderedSaves = [...(availableSaves || [])].sort((left, right) => new Date(right.last_mod) - new Date(left.last_mod));
-            setSaves(orderedSaves);
-            const preferredSave = orderedSaves.find(save => save.name === activeProfile.selected_save)?.name
-                || orderedSaves[0]?.name
-                || "";
-            resetStartup({
-                bind_ip: activeProfile.bind_ip || "0.0.0.0",
-                port: activeProfile.port || 34197,
-                selected_save: preferredSave
-            });
-        } catch (error) {
-            setSaves([]);
-            setStartupLoadError("Available saves could not be loaded, so startup configuration is locked.");
-        } finally {
-            setIsLoadingStartup(false);
-        }
-    }, [activeProfile, resetStartup]);
-
     const fetchAutostart = useCallback(async () => {
         setIsLoadingAutostart(true);
         setAutostartLoadError("");
@@ -134,6 +139,7 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
     }, [resetAutostart]);
 
     const fetchMapSnapshots = useCallback(async () => {
+        if (!primaryServer) { setIsLoadingMapSnapshots(false); return; }
         setIsLoadingMapSnapshots(true);
         setMapSnapshotLoadError("");
         try {
@@ -144,7 +150,7 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
         } finally {
             setIsLoadingMapSnapshots(false);
         }
-    }, [resetMapSnapshot]);
+    }, [resetMapSnapshot, primaryServer]);
 
     useEffect(() => { fetchSettings(); }, [fetchSettings]);
     useEffect(() => { fetchStartup(); }, [fetchStartup]);
@@ -152,23 +158,27 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
     useEffect(() => { fetchMapSnapshots(); }, [fetchMapSnapshots]);
 
     const saveStartup = async values => {
+        if (processLocked || !startupSettings) return;
         setIsSavingStartup(true);
+        let networkSaved = false;
         try {
-            const state = await profilesResource.updateStartup(activeProfile.id, {
-                bind_ip: values.bind_ip,
-                port: Number(values.port),
-                selected_save: values.selected_save || ""
-            });
-            applyProfileState(state);
-            const refreshed = state.profiles.find(profile => profile.id === state.active_profile_id);
-            resetStartup({
-                bind_ip: refreshed?.bind_ip || values.bind_ip,
-                port: refreshed?.port || Number(values.port),
-                selected_save: refreshed?.selected_save || ""
-            });
-            window.flash("Startup configuration saved.", "green");
+            const allocator = Boolean(values.use_mimalloc);
+            if (serverStatus?.running) {
+                await serversResource.update(serverID, {use_mimalloc: allocator});
+            } else if (primaryServer) {
+                if (values.bind_ip !== startupSettings.bind_ip || Number(values.port) !== startupSettings.port || values.savefile !== startupSettings.savefile) {
+                    applyProfileState(await profilesResource.updateStartup(activeProfile.id, values.bind_ip, Number(values.port), values.savefile || ""));
+                    networkSaved = true;
+                }
+                if (allocator !== startupSettings.use_mimalloc) await serversResource.update(serverID, {use_mimalloc: allocator});
+            } else {
+                await serversResource.update(serverID, {bind_ip: values.bind_ip, port: Number(values.port), selected_save: values.savefile || "", use_mimalloc: allocator});
+            }
+            await fetchStartup();
+            await Promise.all([refreshServers(), refreshServerStatus()]);
+            window.flash("Server startup configuration saved.", "green");
         } catch (error) {
-            window.flash(error?.response?.data || "Startup configuration could not be saved.", "red");
+            window.flash(networkSaved ? "Startup selection was saved, but the remaining options or refreshed status could not be confirmed. Review this form before retrying." : "Server startup configuration could not be saved or confirmed.", "red");
         } finally {
             setIsSavingStartup(false);
         }
@@ -257,7 +267,6 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
         return <div className="ui-subcard p-4" key={name}>{control}</div>;
     };
 
-    const hasUnsavedChanges = isDirty || startupDirty || autostartDirty || mapSnapshotDirty || modPortalDirty;
     const autostartEnabled = Boolean(watchAutostart("enabled"));
     const mapSnapshotMode = watchMapSnapshot("mode") || "automatic";
     const mapSnapshotInterval = Number(watchMapSnapshot("automatic_interval_minutes") || 60);
@@ -278,84 +287,102 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
                     ? "Manual only"
                     : `Every ${mapSnapshotInterval} min`;
 
+    const hasUnsavedChanges = isDirty || startupDirty || autostartDirty || mapSnapshotDirty || modPortalDirty;
+
     return <>
         <PageHeader
             title="Server settings"
             actions={hasUnsavedChanges ? <span className="ui-status-badge ui-status-badge--warning">Unsaved changes</span> : null}
         />
         {locked && <Alert type={canManage ? "warning" : "info"} className="mb-5"><FontAwesomeIcon icon={faLock}/> {!canManage
-            ? "Viewer access is read-only. Profile and manager-wide settings remain visible."
+            ? "Viewer access is read-only. Server startup, network and multiplayer settings remain visible."
             : serverStatus?.known === false
-            ? "Profile startup and multiplayer settings are locked until the Factorio process status is confirmed. Manager-wide preferences remain configurable."
+            ? "Server startup, network and multiplayer settings are locked until the Factorio process status is confirmed. Manager-wide preferences remain configurable."
             : serverStatus?.stopping
-                ? "Profile startup and multiplayer settings remain locked while Factorio is shutting down. Manager-wide preferences remain configurable."
-                : "Stop Factorio to edit profile startup, network and multiplayer settings. Manager-wide preferences remain configurable."}</Alert>}
+                ? "Server startup, network and multiplayer settings remain locked while Factorio is shutting down. Manager-wide preferences remain configurable."
+                : "Stop this server to edit its network, selected save and multiplayer settings. The allocator preference and manager-wide preferences remain configurable."}</Alert>}
 
         <div className="ui-settings-overview-grid mb-5">
             <form id="startup-settings-form" onSubmit={handleStartupSubmit(saveStartup)}>
                 <Panel
                     className="h-full"
                     title="Startup & network"
-                    help="The bind address selects local interfaces. 0.0.0.0 is normally correct in Docker. The host port mapping is configured outside this manager."
+                    help="Startup options belong to the selected server. The game port maps to a host port outside this manager. Allocator changes apply on the next start without restarting a live game."
                     headerAction={<ScopeBadge/>}
                     content={<>
                         {startupLoadError && <Alert type="danger" className="mb-4">
                             <div className="flex flex-wrap items-center gap-3"><span>{startupLoadError}</span><Button type="secondary" size="sm" onClick={fetchStartup}>Retry</Button></div>
                         </Alert>}
-                    <fieldset className="ui-settings-fields" disabled={locked || isLoadingStartup || Boolean(startupLoadError)}>
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            <div className="ui-subcard p-4">
-                                <Label text="Bind address" htmlFor="bind_ip" help="Use 0.0.0.0 to listen on every interface inside the container."/>
-                                <Input register={registerStartup("bind_ip", {
-                                    required: true,
-                                    pattern: /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
-                                })}/>
-                                <Error error={startupErrors.bind_ip} message="Enter a valid IPv4 address."/>
+                        <fieldset className="ui-settings-fields" disabled={locked || isLoadingStartup || Boolean(startupLoadError)}>
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                <div className="ui-subcard p-4">
+                                    <Label text="Bind address" htmlFor="bind_ip" help="Use 0.0.0.0 to listen on every interface inside the container."/>
+                                    <Input register={registerStartup("bind_ip", {
+                                        disabled: locked,
+                                        required: true,
+                                        pattern: /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
+                                    })}/>
+                                    <Error error={startupErrors.bind_ip} message="Enter a valid IPv4 address."/>
+                                </div>
+                                <div className="ui-subcard p-4">
+                                    <Label text="Game port" htmlFor="port" help="Factorio uses UDP; 34197 is the default container port."/>
+                                    <Input type="number" min={1} max={65535} register={registerStartup("port", {disabled: locked, required: true, min: 1, max: 65535, valueAsNumber: true})}/>
+                                    <Error error={startupErrors.port} message="Port must be between 1 and 65535."/>
+                                </div>
+                                <div className="ui-subcard p-4 xl:col-span-2">
+                                    <Label text="Save to start" htmlFor="savefile" help="The top-bar Start button loads this save. Change it here while Factorio is stopped."/>
+                                    <Select
+                                        register={registerStartup("savefile", {disabled: locked, required: saves.length > 0})}
+                                        disabled={saves.length === 0}
+                                        options={saves.length > 0
+                                            ? saves.map(save => ({value: save.name, name: save.name}))
+                                            : [{value: "", name: "No save available"}]}
+                                    />
+                                    <Error error={startupErrors.savefile} message="Choose a save file."/>
+                                </div>
                             </div>
-                            <div className="ui-subcard p-4">
-                                <Label text="Game port" htmlFor="port" help="Factorio uses UDP; 34197 is the default container port."/>
-                                <Input type="number" min={1} max={65535} register={registerStartup("port", {required: true, min: 1, max: 65535, valueAsNumber: true})}/>
-                                <Error error={startupErrors.port} message="Port must be between 1 and 65535."/>
-                            </div>
-                            <div className="ui-subcard p-4 xl:col-span-2">
-                                <Label text="Save to start" htmlFor="selected_save" help="The top-bar Start button loads this save. Change it here while Factorio is stopped."/>
-                                <Select
-                                    register={registerStartup("selected_save", {required: saves.length > 0})}
-                                    disabled={saves.length === 0}
-                                    options={saves.length > 0
-                                        ? saves.map(save => ({value: save.name, name: save.name}))
-                                        : [{value: "", name: "No save available"}]}
+                        </fieldset>
+                        <fieldset className="ui-settings-fields" disabled={processLocked || isLoadingStartup || Boolean(startupLoadError)}>
+                            <div className="ui-subcard p-4 flex items-center">
+                                <Checkbox
+                                    text="Use mimalloc memory allocator (Linux only)"
+                                    help="Uses the mimalloc library instead of the system allocator. Linux only; has no effect on Windows or macOS."
+                                    register={registerStartup("use_mimalloc")}
                                 />
-                                <Error error={startupErrors.selected_save} message="Choose a save file."/>
                             </div>
-                        </div>
-                    </fieldset></>}
-                    actions={canManage ? <Button form="startup-settings-form" isSubmit isLoading={isSavingStartup} isDisabled={locked || isLoadingStartup || Boolean(startupLoadError) || !startupDirty}>
+                            <p className="text-sm text-gray-light">Saved for the next server start. Changing the allocator does not restart a running game.</p>
+                        </fieldset>
+                    </>}
+                    actions={canManage ? <Button form="startup-settings-form" isSubmit isLoading={isSavingStartup} isDisabled={processLocked || isLoadingStartup || Boolean(startupLoadError) || !startupDirty}>
                         <FontAwesomeIcon icon={faNetworkWired}/> Save startup configuration
                     </Button> : null}
                 />
             </form>
 
-            <form id="autostart-settings-form" onSubmit={handleAutostartSubmit(saveAutostart)}>
-                <Panel
-                    className="h-full"
-                    title="Autostart"
-                    help="Starts the active profile with its configured bind address, port and selected save when the manager container starts. It does not start or stop Factorio immediately."
-                    headerAction={<div className="flex flex-wrap items-center justify-end gap-2"><ScopeBadge scope="manager"/><span className={`ui-status-badge ${autostartStatusClass}`}>{autostartStatusLabel}</span></div>}
-                    content={<>
-                        {autostartLoadError && <Alert type="danger" className="mb-4"><div className="flex flex-wrap items-center gap-3"><span>{autostartLoadError}</span><Button type="secondary" size="sm" onClick={fetchAutostart}>Retry</Button></div></Alert>}
-                        <fieldset disabled={!canManage || isLoadingAutostart || Boolean(autostartLoadError)}><div className="ui-startup-setting">
-                        <div className="ui-startup-setting__icon"><FontAwesomeIcon icon={faPowerOff}/></div>
-                        <Checkbox text="Start Factorio with this manager" register={registerAutostart("enabled")}/>
-                    </div></fieldset></>}
+            {serverID && (
+                <form id="autostart-settings-form" onSubmit={handleAutostartSubmit(saveAutostart)}>
+                    <Panel
+                        className="h-full"
+                        title="Autostart"
+                        help="Manager-wide container autostart starts Server 1 using its persisted startup configuration. It does not start or stop a game immediately."
+                        headerAction={<div className="flex flex-wrap items-center justify-end gap-2"><ScopeBadge scope="manager"/><span className={`ui-status-badge ${autostartStatusClass}`}>{autostartStatusLabel}</span></div>}
+                        content={<>
+                            {autostartLoadError && <Alert type="danger" className="mb-4"><div className="flex flex-wrap items-center gap-3"><span>{autostartLoadError}</span><Button type="secondary" size="sm" onClick={fetchAutostart}>Retry</Button></div></Alert>}
+                            <fieldset disabled={!canManage || isLoadingAutostart || Boolean(autostartLoadError)}><div className="ui-startup-setting">
+                            <div className="ui-startup-setting__icon"><FontAwesomeIcon icon={faPowerOff}/></div>
+                            <Checkbox text="Start Factorio with this manager" register={registerAutostart("enabled")}/>
+                        </div></fieldset>
+                        </>}
                     actions={canManage ? <Button form="autostart-settings-form" isSubmit isLoading={isSavingAutostart} isDisabled={isLoadingAutostart || Boolean(autostartLoadError) || !autostartDirty}>
                         <FontAwesomeIcon icon={faPowerOff}/> Save autostart
                     </Button> : null}
                 />
             </form>
+            )
+        }
         </div>
 
-        <form id="map-snapshot-settings-form" className="mb-5" onSubmit={handleMapSnapshotSubmit(saveMapSnapshots)}>
+        {primaryServer ? <form id="map-snapshot-settings-form" className="mb-5" onSubmit={handleMapSnapshotSubmit(saveMapSnapshots)}>
             <Panel
                 title="Map snapshots"
                 help="Controls whether factory maps are generated automatically, only on demand, or not at all."
@@ -410,22 +437,22 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
                     <FontAwesomeIcon icon={faMap}/> Save map settings
                 </Button> : null}
             />
-        </form>
+        </form> : <Alert type="info" className="mb-5">Factory-map snapshot settings are currently available for Server 1 only.</Alert>}
 
         <ModPortalPreferences canManage={canManage} onDirtyChange={setModPortalDirty}/>
 
         <form id="server-settings-form" onSubmit={handleSubmit(saveServerSettings)}>
             <Panel
                 title="Multiplayer configuration"
-                help="Factorio server-settings.json for the active profile, including visibility, passwords, player limits and autosaves."
+                help="Factorio server-settings.json for the selected server, including visibility, passwords, player limits and autosaves."
                 headerAction={<ScopeBadge/>}
                 content={isLoading
                     ? <div className="ui-empty-state"><div><FontAwesomeIcon className="text-orange" icon={faServer} spin/><p className="mt-3">Loading settings…</p></div></div>
                     : settingsLoadError
                         ? <Alert type="danger"><div className="flex flex-wrap items-center gap-3"><span>{settingsLoadError}</span><Button type="secondary" size="sm" onClick={fetchSettings}>Retry</Button></div></Alert>
-                    : <fieldset className="ui-settings-fields" disabled={locked}>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{fields.map(key => field(key, settings[key]))}</div>
-                    </fieldset>}
+                        : <fieldset className="ui-settings-fields" disabled={locked}>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{fields.map(key => field(key, settings[key]))}</div>
+                        </fieldset>}
             />
             {isDirty && settings && !settingsLoadError && <aside className="ui-unsaved-bar" role="status" aria-live="polite">
                 <div><strong>Unsaved multiplayer changes</strong></div>

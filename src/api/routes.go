@@ -103,6 +103,7 @@ func NewRouter() *mux.Router {
 	// Serves all JSON REST handlers prefixed with /api
 	apiRouter := mainRouter.PathPrefix("/api").Subrouter()
 	apiRouter.Use(AuthMiddleware)
+	apiRouter.Use(SelectedServerMiddleware)
 	apiRouter.Use(ProfileDataMiddleware)
 
 	// use subrouter for calls, that run only, when server is turned off
@@ -255,6 +256,7 @@ func routeRequiresAdministrator(route Route) bool {
 // Defines all API REST endpoints
 // All routes are prefixed with /api
 var apiRoutes = Routes{
+	{"ServerConsoleCommand", "POST", "/servers/{serverID}/command", ServerCommandHandler, false},
 	{"PreviewModPackMerge", "POST", "/mods/packs/{modpack}/merge/preview", PreviewModPackMergeHandler, true},
 	{"MergeModPack", "POST", "/mods/packs/{modpack}/merge", MergeModPackHandler, true},
 	{"GetModPortalPreferences", "GET", "/mods/portal/preferences", GetModPortalPreferences, false},

@@ -1137,12 +1137,15 @@ func (server *Server) parseRunningCommand(std io.ReadCloser) (err error) {
 	return nil
 }
 
-func (server *Server) writeLog(logline string) error {
-	config := bootstrap.GetConfig()
-	logfileName := config.ConsoleLogFile
+func (server *Server) ConsoleLogPath() string {
 	if server.ID != "" && server.ID != DefaultServerID {
-		logfileName = filepath.Join(filepath.Dir(server.ConfigDir), "console.log")
+		return filepath.Join(filepath.Dir(server.ConfigDir), "console.log")
 	}
+	return bootstrap.GetConfig().ConsoleLogFile
+}
+
+func (server *Server) writeLog(logline string) error {
+	logfileName := server.ConsoleLogPath()
 	file, err := os.OpenFile(logfileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		log.Printf("Cannot open logfile %s for appending Factorio Server output: %s", logfileName, err)

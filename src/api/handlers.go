@@ -96,6 +96,10 @@ func SaveSession(w http.ResponseWriter, r *http.Request, session *sessions.Sessi
 
 // Lists all save files in the factorio/saves directory
 func ListSaves(w http.ResponseWriter, r *http.Request) {
+	if server, ok := serverFromRequest(r); ok && server.ID != "" && server.ID != factorio.DefaultServerID {
+		ListServerSavesHandler(w, r)
+		return
+	}
 	var resp interface{}
 	defer func() {
 		WriteResponse(w, resp)
@@ -152,17 +156,9 @@ func ListServerSavesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-	serverID := mux.Vars(r)["serverID"]
-	manager, err := factorio.InitServerManager()
-	if err != nil {
-		resp = fmt.Sprintf("Server manager not initialized: %s", err)
-		log.Println(resp)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	server, ok := manager.GetServer(serverID)
+	server, ok := serverFromRequest(r)
 	if !ok {
-		resp = fmt.Sprintf("Server %s not found", serverID)
+		resp = errServerNotFound
 		log.Println(resp)
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -205,13 +201,13 @@ func ListServerSavesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func DLSave(w http.ResponseWriter, r *http.Request) {
-	config := bootstrap.GetConfig()
-	save, err := factorio.FindSave(mux.Vars(r)["save"])
+	directory := requestSavesDirectory(r)
+	save, err := factorio.FindSaveForDir(directory, mux.Vars(r)["save"])
 	if err != nil {
 		http.Error(w, "save not found", http.StatusNotFound)
 		return
 	}
-	saveName := filepath.Join(config.FactorioSavesDir, save.Name)
+	saveName := filepath.Join(directory, save.Name)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": save.Name}))
@@ -282,7 +278,7 @@ func UploadSave(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 
-		temporary, err := os.CreateTemp(config.FactorioSavesDir, ".save-upload-*.zip")
+		temporary, err := os.CreateTemp(requestSavesDirectory(r), ".save-upload-*.zip")
 		if err != nil {
 			resp = fmt.Sprintf("Error creating temporary save upload: %s", err)
 			log.Println(resp)
@@ -316,7 +312,13 @@ func UploadSave(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if err := factorio.ActivateSaveUpload(temporaryPath, saveFile.Filename); err != nil {
+		server, found := serverFromRequest(r)
+		if !found {
+			w.WriteHeader(http.StatusNotFound)
+			resp = errServerNotFound
+			return
+		}
+		if err := server.ActivateSaveUpload(temporaryPath, saveFile.Filename); err != nil {
 			resp = fmt.Sprintf("Error activating uploaded save: %s", err)
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			return
@@ -355,7 +357,7 @@ func RemoveSave(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["save"]
 
-	save, err := factorio.FindSave(name)
+	save, err := factorio.FindSaveForDir(requestSavesDirectory(r), name)
 	if err != nil {
 		resp = fmt.Sprintf("Error finding save {%s}: %s", name, err)
 		log.Println(resp)
@@ -363,7 +365,13 @@ func RemoveSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = save.Remove()
+	server, found := serverFromRequest(r)
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
+	err = server.RemoveSave(save.Name)
 	if err != nil {
 		resp = fmt.Sprintf("Error removing save {%s}: %s", name, err)
 		log.Println(resp)
@@ -423,6 +431,10 @@ func CreateSaveHandler(w http.ResponseWriter, r *http.Request) {
 
 // LogTail returns last lines of the factorio-current.log file
 func LogTail(w http.ResponseWriter, r *http.Request) {
+	if server, ok := serverFromRequest(r); ok && server.ID != "" && server.ID != factorio.DefaultServerID {
+		LogTailScopedHandler(w, r)
+		return
+	}
 	var err error
 	var resp interface{}
 
@@ -451,30 +463,17 @@ func LogTailScopedHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-	config := bootstrap.GetConfig()
-	serverID := mux.Vars(r)["serverID"]
-	manager, err := factorio.InitServerManager()
-	if err != nil {
-		resp = fmt.Sprintf("Server manager not initialized: %s", err)
-		log.Println(resp)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	server, ok := manager.GetServer(serverID)
+	server, ok := serverFromRequest(r)
 	if !ok {
-		resp = fmt.Sprintf("Server %s not found", serverID)
+		resp = errServerNotFound
 		log.Println(resp)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	logFile := config.ConsoleLogFile
-	if server.ConfigDir != "" {
-		logFile = filepath.Join(filepath.Dir(server.ConfigDir), "console.log")
-	}
-	resp, err = factorio.TailLogForFile(logFile)
+	resp, err = factorio.TailLogForFile(server.ConsoleLogPath())
 	if err != nil {
-		resp = fmt.Sprintf("Could not tail log for server %s: %s", serverID, err)
+		resp = "Could not read the selected server's log"
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -491,7 +490,11 @@ func LoadConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	config := bootstrap.GetConfig()
-	configContents, err := factorio.LoadConfig(config.FactorioConfigFile)
+	configFile := config.FactorioConfigFile
+	if server, ok := serverFromRequest(r); ok && server.ConfigDir != "" {
+		configFile = filepath.Join(server.ConfigDir, "config.ini")
+	}
+	configContents, err := factorio.LoadConfig(configFile)
 	if err != nil {
 		resp = fmt.Sprintf("Could not retrieve config.ini: %s", err)
 		log.Println(resp)
@@ -624,7 +627,12 @@ func StopServer(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	var server = factorio.GetFactorioServer()
+	server, found := serverFromRequest(r)
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
 	if server.IsStopping() {
 		resp = "Factorio server is already stopping"
 		w.WriteHeader(http.StatusConflict)
@@ -656,7 +664,12 @@ func KillServer(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	var server = factorio.GetFactorioServer()
+	server, found := serverFromRequest(r)
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
 	if server.GetRunning() {
 		err := server.Kill()
 		if err != nil {
@@ -674,11 +687,13 @@ func KillServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func CheckServer(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-		WriteResponse(w, factorio.GetFactorioServer().Snapshot())
-	}()
-
+	server, found := serverFromRequest(r)
+	if !found {
+		http.Error(w, errServerNotFound, http.StatusNotFound)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	WriteResponse(w, server.Snapshot())
 }
 
 func FactorioVersion(w http.ResponseWriter, r *http.Request) {
@@ -1139,7 +1154,12 @@ func GetServerSettings(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	var server = factorio.GetFactorioServer()
+	server, found := serverFromRequest(r)
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
 	resp = serverSettingsForRequest(server.SettingsSnapshot(), requestUserIsAdministrator(r))
 
 	log.Printf("Sent server settings response")
@@ -1155,24 +1175,16 @@ func GetServerSettingsScopedHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-	serverID := mux.Vars(r)["serverID"]
-	manager, err := factorio.InitServerManager()
-	if err != nil {
-		resp = fmt.Sprintf("Server manager not initialized: %s", err)
-		log.Println(resp)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	server, ok := manager.GetServer(serverID)
+	server, ok := serverFromRequest(r)
 	if !ok {
-		resp = fmt.Sprintf("Server %s not found", serverID)
+		resp = errServerNotFound
 		log.Println(resp)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	resp = serverSettingsForRequest(server.SettingsSnapshot(), requestUserIsAdministrator(r))
-	log.Printf("Sent server settings response for server %s", serverID)
+	log.Printf("Sent selected server settings response")
 }
 
 // serverSettingsForRequest keeps read-only operational settings visible to
@@ -1238,7 +1250,12 @@ func UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Received server settings update request")
-	var server = factorio.GetFactorioServer()
+	server, found := serverFromRequest(r)
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		resp = errServerNotFound
+		return
+	}
 
 	var updatedSettings map[string]interface{}
 	if err = json.Unmarshal(body, &updatedSettings); err != nil {

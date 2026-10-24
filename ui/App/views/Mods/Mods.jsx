@@ -28,6 +28,7 @@ import BackupRestore from "../../components/BackupRestore";
 const Mods = ({serverStatus, canManage = false}) => {
     const [searchParams] = useSearchParams();
     const serverID = searchParams.get("server") || null;
+    const additionalServer = Boolean(serverID && serverID !== "1");
     const {activeProfile, refreshProfiles} = useProfiles();
     const [installedMods, setInstalledMods] = useState([]);
     const [modPacks, setModPacks] = useState([]);
@@ -159,17 +160,18 @@ const Mods = ({serverStatus, canManage = false}) => {
             </div>
         </Alert>}
 
+        {additionalServer && <Alert type="info" className="mb-5">Mod uploads, toggles, individual updates and downloads target this server. Portal dependency installation, mod-pack application, backup restore and startup-setting evaluation are not available for additional servers yet. Configure those on a source server and capture a reusable profile preset instead.</Alert>}
         {canManage && !disabled && <TabControl>
-            <Tab title="Mod portal"><AddMod
+            {!additionalServer && <Tab title="Mod portal"><AddMod
                 refetchInstalledMods={fetchInstalledMods}
                 fuse={fuse}
                 factorioVersion={portalFactorioLine}
                 portalError={portalLoadError}
                 retryPortal={() => setReloadToken(token => token + 1)}
-            /></Tab>
+            /></Tab>}
             <Tab title="Upload archive"><UploadMod refetchInstalledMods={fetchInstalledMods}/></Tab>
-            <Tab title="Restore backup"><div className="p-5"><BackupRestore kind="mods" disabled={disabled} activeProfile={activeProfile} onComplete={fetchInstalledMods}/></div></Tab>
-            <Tab title="Import from save"><LoadMods refreshMods={fetchInstalledMods}/></Tab>
+            {!additionalServer && <Tab title="Restore backup"><div className="p-5"><BackupRestore kind="mods" disabled={disabled} activeProfile={activeProfile} onComplete={fetchInstalledMods}/></div></Tab>}
+            {!additionalServer && <Tab title="Import from save"><LoadMods refreshMods={fetchInstalledMods}/></Tab>}
         </TabControl>}
 
         <Panel
@@ -192,7 +194,7 @@ const Mods = ({serverStatus, canManage = false}) => {
                 />}
             actions={<>
                 {!disabled && <>
-                    <Button size="sm" type="danger" isLoading={isDeletingAllMods} isDisabled={installedMods.length === 0} onClick={() => setIsDeleteAllDialogOpen(true)}>
+                    <Button size="sm" type="danger" isLoading={isDeletingAllMods} isDisabled={additionalServer || installedMods.length === 0} onClick={() => setIsDeleteAllDialogOpen(true)}>
                         <FontAwesomeIcon icon={faTrashAlt}/> Delete all
                     </Button>
                     <Button size="sm" type="secondary" isLoading={isUpdatingAllMods} isDisabled={updatableMods.length === 0} onClick={updateAllMods}>
@@ -205,7 +207,7 @@ const Mods = ({serverStatus, canManage = false}) => {
             </>}
         />
 
-        {canManage && !isLoading && !loadError && <ModStartupSettings
+        {canManage && !additionalServer && !isLoading && !loadError && <ModStartupSettings
             profileId={activeProfile?.id}
             statusLocked={statusLocked}
             refreshKey={startupSettingsRefreshKey}
@@ -213,7 +215,7 @@ const Mods = ({serverStatus, canManage = false}) => {
 
         <Panel
             title="Mod packs"
-            help="Add to profile keeps existing mods and settings. Replace mods restores the pack's complete mod set and stored settings. Both require Factorio to be stopped."
+            help="Add to server keeps existing mods and settings. Replace mods restores the pack's complete mod set and stored settings. Both require this server to be stopped."
             headerAction={<ScopeBadge scope="manager"/>}
             content={isLoading
                 ? <div className="ui-empty-state"><div><FontAwesomeIcon className="text-orange" icon={faPuzzlePiece} spin/><p className="mt-3">Reading mod packs…</p></div></div>
@@ -228,14 +230,14 @@ const Mods = ({serverStatus, canManage = false}) => {
                     reloadMods={fetchInstalledMods}
                     reloadModPacks={fetchModPacks}
                     profileLocked={disabled}
-                    readOnly={!canManage}
+                    readOnly={!canManage || additionalServer}
                 />)}</div>}
-            actions={canManage ? <CreateModPack onSuccess={fetchModPacks}/> : null}
+            actions={canManage && !additionalServer ? <CreateModPack onSuccess={fetchModPacks}/> : null}
         />
 
         <ConfirmDialog
             title="Delete all installed mods?"
-            content={`Every installed mod archive and the active mod list will be removed from ${activeProfile?.name || "the active profile"}. Manager-wide mod packs and other profiles are kept.`}
+            content={`Every installed mod archive and the active mod list will be removed from ${activeProfile?.name || "the selected server"}. Manager-wide mod packs and other servers are kept.`}
             isOpen={isDeleteAllDialogOpen}
             close={() => setIsDeleteAllDialogOpen(false)}
             onSuccess={deleteAllMods}

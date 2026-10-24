@@ -1,4 +1,4 @@
-import React, {useState} from "react";
+import React, {useEffect, useState} from "react";
 import {useLocation} from "react-router-dom";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
@@ -8,6 +8,7 @@ import {
 import server from "../../api/resources/server";
 import Button from "./Button";
 import ConfirmDialog from "./ConfirmDialog";
+import {useServers} from "../context/ServerContext";
 import {useProfiles} from "../context/ProfileContext";
 
 const isManagerPath = pathname => ["/profiles", "/servers", "/user-management"].some(path => pathname === path || pathname.startsWith(path + "/"));
@@ -16,7 +17,12 @@ const channelLabel = target => target === "latest" ? "Experimental" : target ===
 
 const ProfileContextBar = ({serverStatus, refreshServerStatus, canManage = false}) => {
     const location = useLocation();
-    const {activeProfile, isLoading, error, refreshProfiles} = useProfiles();
+    const {selectedServer, isLoading, error, refreshServers} = useServers();
+    const {state: profileLibrary} = useProfiles();
+    const preset = profileLibrary?.profiles?.find(profile => profile.is_global && profile.id === selectedServer?.profile_id);
+    const activeProfile = selectedServer && {...selectedServer, selected_save: selectedServer.savefile, bind_ip: selectedServer.bindip};
+    const refreshProfiles = refreshServers;
+    useEffect(() => { setIsKillDialogOpen(false); }, [selectedServer?.id]);
     const [isStarting, setIsStarting] = useState(false);
     const [isStopping, setIsStopping] = useState(false);
     const [isKilling, setIsKilling] = useState(false);
@@ -25,14 +31,14 @@ const ProfileContextBar = ({serverStatus, refreshServerStatus, canManage = false
 
     if (isManagerPath(location.pathname)) return null;
 
-    if (isLoading && !activeProfile) return <section className="ui-context-strip ui-context-strip--loading" aria-label="Loading active profile">
-        <div className="ui-context-loading"><FontAwesomeIcon icon={faLayerGroup} spin/> Loading active profile…</div>
+    if (isLoading && !activeProfile) return <section className="ui-context-strip ui-context-strip--loading" aria-label="Loading selected server">
+        <div className="ui-context-loading"><FontAwesomeIcon icon={faLayerGroup} spin/> Loading selected server...</div>
     </section>;
 
-    if (!activeProfile) return <section className="ui-context-strip ui-context-strip--error" aria-label="Active profile unavailable">
+    if (!activeProfile) return <section className="ui-context-strip ui-context-strip--error" aria-label="Selected server unavailable">
         <div className="ui-context-loading">
             <FontAwesomeIcon icon={faLayerGroup}/>
-            <span><strong>Active profile unavailable</strong><small>{error || "Profile metadata could not be loaded."}</small></span>
+            <span><strong>Selected server unavailable</strong><small>{error || "This server is no longer available. Select another server."}</small></span>
         </div>
         <button className="ui-button ui-button--secondary ui-button--sm" type="button" onClick={() => refreshProfiles().catch(() => undefined)}>
             <FontAwesomeIcon icon={faRotate}/> Retry
@@ -41,11 +47,9 @@ const ProfileContextBar = ({serverStatus, refreshServerStatus, canManage = false
 
     const statusKnown = serverStatus?.known !== false;
     const state = !statusKnown ? "unknown" : serverStatus?.stopping ? "stopping" : serverStatus?.running ? "running" : "stopped";
-    const version = activeProfile.installed_version || serverStatus?.fac_version || "Unknown";
+    const version = activeProfile.base_mod_version || activeProfile.fac_version || serverStatus?.fac_version || "Unknown";
     const channel = channelLabel(activeProfile.release_target);
-    const selectedSave = activeProfile.save_count === 0
-        ? "No save yet"
-        : activeProfile.selected_save || serverStatus?.savefile || `${activeProfile.save_count} stored saves`;
+    const selectedSave = activeProfile.selected_save || serverStatus?.savefile || "No save selected";
 
     const busy = !statusKnown || isStarting || isStopping || isKilling || isRefreshingStatus || serverStatus?.stopping;
 
@@ -101,9 +105,9 @@ const ProfileContextBar = ({serverStatus, refreshServerStatus, canManage = false
         }
     };
 
-    return <section className="ui-context-strip" aria-label={`Active profile ${activeProfile.name}`}>
+    return <section className="ui-context-strip" aria-label={`Selected server ${activeProfile.name}`}>
         <div className="ui-context-item ui-context-item--server">
-            <span className="ui-context-label">Server 1</span>
+            <span className="ui-context-label">{activeProfile.name || `Server ${activeProfile.id}`}</span>
             <span className="ui-context-value"><span className={`ui-status-orb ui-status-orb--${state}`}/><strong>{state}</strong></span>
         </div>
         <div className="ui-context-item ui-context-item--save" title={selectedSave}>
@@ -114,28 +118,30 @@ const ProfileContextBar = ({serverStatus, refreshServerStatus, canManage = false
             <span className="ui-context-label">Installed version</span>
             <span className="ui-context-value"><FontAwesomeIcon icon={faCloudArrowDown}/><strong>{version}</strong>{channel && <small>· {channel}</small>}</span>
         </div>
-        <div className="ui-context-item ui-context-item--mode">
-            <span className="ui-context-label">Game mode</span>
-            <span className="ui-context-value"><FontAwesomeIcon icon={faGamepad}/><strong>{modeLabel(activeProfile.game_mode)}</strong></span>
-        </div>
+        {(preset || activeProfile.game_mode) && <div className="ui-context-item ui-context-item--mode">
+            <span className="ui-context-label">{preset ? "Profile preset" : "Game mode"}</span>
+            {preset && <span className="ui-context-value">Preset: <strong>{preset.name}</strong></span>}
+            {activeProfile.game_mode && <span className="ui-context-value"><FontAwesomeIcon icon={faGamepad}/><strong>{modeLabel(activeProfile.game_mode)}</strong></span>}
+        </div>}
         <div className="ui-context-actions" aria-label="Factorio process controls">
             {!statusKnown
-                ? <Button size="sm" type="secondary" onClick={retryServerStatus} isLoading={isRefreshingStatus} title="Retry Factorio process status">
+                ? <Button size="sm" type="secondary" onClick={retryServerStatus} isLoading={isRefreshingStatus} aria-label="Retry status" title="Retry Factorio process status">
                     <FontAwesomeIcon icon={faRotate}/> <span className="ui-context-action-label">Retry status</span>
                 </Button>
                 : !canManage
                     ? <span className="ui-status-badge">Read-only access</span>
                 : serverStatus?.running
                 ? <>
-                    <Button size="sm" onClick={stopServer} isLoading={isStopping || serverStatus?.stopping} isDisabled={isKilling || serverStatus?.stopping}>
+                    <Button size="sm" onClick={stopServer} isLoading={isStopping || serverStatus?.stopping} isDisabled={isKilling || serverStatus?.stopping} aria-label="Save & stop">
                         <FontAwesomeIcon icon={faStop}/> <span className="ui-context-action-label">Save & stop</span>
                     </Button>
-                    <Button size="sm" type="danger" onClick={() => setIsKillDialogOpen(true)} isDisabled={busy} title="Immediately kill Factorio without saving">
+                    <Button size="sm" type="danger" onClick={() => setIsKillDialogOpen(true)} isDisabled={busy} aria-label="Force stop" title="Immediately kill Factorio without saving">
                         <FontAwesomeIcon icon={faSkullCrossbones}/> <span className="ui-context-action-label">Force stop</span>
                     </Button>
                 </>
                 : <Button
                     size="sm"
+                    aria-label="Start server"
                     type="success"
                     onClick={startServer}
                     isLoading={isStarting}

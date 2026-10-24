@@ -11,6 +11,7 @@ import Label from "../components/Label";
 import Error from "../components/Error";
 import ScopeBadge from "../components/ScopeBadge";
 import {useProfiles} from "../context/ProfileContext";
+import {useServers} from "../context/ServerContext";
 
 const channels = [
     {id: "stable", title: "Stable", description: "Recommended for long-running worlds and modded servers.", icon: faShieldHalved, tone: "green"},
@@ -47,6 +48,7 @@ const ChoiceCard = ({option, selected, installed, disabled, onSelect, detail}) =
 };
 
 const Releases = ({serverStatus, refreshServerStatus, canManage = false}) => {
+    const {serverID, selectedServer} = useServers();
     const {activeProfile, refreshProfiles} = useProfiles();
     const [targetType, setTargetType] = useState(null);
     const [exactVersion, setExactVersion] = useState("");
@@ -61,6 +63,7 @@ const Releases = ({serverStatus, refreshServerStatus, canManage = false}) => {
     const locked = Boolean(!canManage || serverStatus?.known === false || serverStatus?.running || serverStatus?.stopping);
 
     const loadRuntime = useCallback(async () => {
+        if (serverID !== "1") return;
         setIsLoading(true);
         setReleaseLoadError("");
         setModeLoadError("");
@@ -92,9 +95,17 @@ const Releases = ({serverStatus, refreshServerStatus, canManage = false}) => {
             setModeLoadError("Game-mode status could not be loaded.");
         }
         setIsLoading(false);
-    }, []);
+    }, [serverID]);
 
     useEffect(() => { loadRuntime(); }, [loadRuntime]);
+
+    if (serverID !== "1") return <>
+        <PageHeader title="Version & mode"/>
+        <Panel title="Shared Factorio installation" content={<>
+            <p className="mb-3">Installed engine: {selectedServer?.base_mod_version || selectedServer?.fac_version || "Unknown"}.</p>
+            <p>Servers share the installed engine. Manage engine replacement from Server 1 with all games stopped. Independent version and game-mode switching is not available for additional servers yet.</p>
+        </>}/>
+    </>;
 
     const install = async () => {
         const target = targetType === "exact" ? exactVersion.trim() : targetType;

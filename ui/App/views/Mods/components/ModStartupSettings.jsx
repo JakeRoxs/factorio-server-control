@@ -248,7 +248,7 @@ const ModStartupSettings = ({profileId, statusLocked, refreshKey = 0}) => {
 
     return <Panel
         title="Mod startup settings"
-        help="Startup values are evaluated by the installed Factorio version, stored with the active profile, and applied the next time Factorio starts. Runtime-global and per-player settings are intentionally unchanged."
+        help="Startup values are evaluated by the installed Factorio version, stored with the selected server, and applied the next time it starts. Runtime-global and per-player settings are intentionally unchanged."
         className="mb-5"
         headerAction={<div className="flex flex-wrap items-center justify-end gap-2"><ScopeBadge/>{dirtySettings.length > 0 && <span className="ui-status-badge ui-status-badge--warning">{dirtySettings.length} changed</span>}</div>}
         content={content}

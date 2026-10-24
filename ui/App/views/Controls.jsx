@@ -15,6 +15,7 @@ import ScopeBadge from "../components/ScopeBadge";
 import Button from "../components/Button";
 import MapImageViewer, {entityDetailZoom, MapImageLightbox} from "../components/MapImageViewer";
 import PlayerOverviewPanel from "../components/PlayerOverviewPanel";
+import {useServers} from "../context/ServerContext";
 import {useProfiles} from "../context/ProfileContext";
 import mapSurfaceHelpers from "./mapSurfaces.cjs";
 
@@ -35,7 +36,10 @@ const formatDate = value => {
 };
 
 const Controls = ({serverStatus, canManage = false}) => {
-    const {activeProfile} = useProfiles();
+    const {selectedServer, serverID} = useServers();
+    const primaryServer = serverID === "1";
+    const {activeProfile: metadata} = useProfiles();
+    const activeProfile = selectedServer && {...metadata, ...selectedServer, id: metadata?.id, selected_save: selectedServer.savefile, bind_ip: selectedServer.bindip, release_target: selectedServer.version};
     const [saves, setSaves] = useState([]);
     const [checkpointState, setCheckpointState] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -54,6 +58,7 @@ const Controls = ({serverStatus, canManage = false}) => {
     const [mapEntityReloadToken, setMapEntityReloadToken] = useState(0);
 
     const loadMapSnapshot = useCallback(async (showError = false) => {
+        if (!primaryServer) { setIsLoadingMap(false); return null; }
         try {
             const state = await serverResource.mapSnapshot();
             setMapState(state);
@@ -66,7 +71,7 @@ const Controls = ({serverStatus, canManage = false}) => {
         } finally {
             setIsLoadingMap(false);
         }
-    }, []);
+    }, [primaryServer]);
 
     useEffect(() => {
         let active = true;
@@ -75,7 +80,7 @@ const Controls = ({serverStatus, canManage = false}) => {
         setCheckpointLoadError("");
         Promise.allSettled([
             savesResource.list(false),
-            savesResource.checkpoints.list()
+            primaryServer ? savesResource.checkpoints.list() : Promise.resolve(null)
         ]).then(([saveResult, checkpointResult]) => {
             if (!active) return;
             if (saveResult.status === "fulfilled") setSaves(saveResult.value || []);
@@ -173,7 +178,7 @@ const Controls = ({serverStatus, canManage = false}) => {
     const checkpoints = checkpointState?.checkpoints || [];
     const latestCheckpoint = [...checkpoints].sort((left, right) => new Date(right.created_at) - new Date(left.created_at))[0] || null;
     const mapImageURL = activeSurface && mapSnapshot
-        ? `/api/map-snapshot/surfaces/${encodeURIComponent(activeSurface.id)}?v=${encodeURIComponent(mapSnapshot.generated_at)}`
+        ? `/api/map-snapshot/surfaces/${encodeURIComponent(activeSurface.id)}?server=${encodeURIComponent(serverID)}&v=${encodeURIComponent(mapSnapshot.generated_at)}`
         : "";
     const activeSurfaceLabel = activeSurface ? mapSurfaceLabel(activeSurface) : "";
     const mapImageAlt = activeSurface && mapSnapshot ? `${activeSurfaceLabel} map from ${mapSnapshot.save_name}` : "Factory map";
@@ -226,37 +231,38 @@ const Controls = ({serverStatus, canManage = false}) => {
                                 <div className="ui-fact"><span>File size</span><strong>{formatSize(activeSave.size)}</strong></div>
                                 <div className="ui-fact"><span>Stored saves</span><strong>{activeProfile?.save_count ?? sortedSaves.length}</strong></div>
                                 <div className="ui-fact"><span>Installed mods</span><strong>{activeProfile?.mod_count ?? "—"}</strong></div>
-                                <div className="ui-fact"><span>Fixed checkpoints</span><strong>{checkpointLoadError ? "Unavailable" : checkpoints.length}</strong></div>
+                                <div className="ui-fact"><span>Fixed checkpoints</span><strong>{!primaryServer || checkpointLoadError ? "Unavailable" : checkpoints.length}</strong></div>
                             </div>
                         </div>
                         : <>
                             {checkpointLoadError && <Alert type="warning" className="mb-4"><div className="flex flex-wrap items-center gap-3"><span>{checkpointLoadError}</span><Button type="secondary" size="sm" onClick={() => setOverviewReloadToken(token => token + 1)}>Retry</Button></div></Alert>}
-                            <EmptyState icon={faHardDrive} title="No world in this profile"/>
+                            <EmptyState icon={faHardDrive} title="No world on this server"/>
                         </>}
                 actions={<>
-                    <Link className="ui-button ui-button--secondary ui-button--sm" to="/saves"><FontAwesomeIcon icon={faFloppyDisk}/> Saves & checkpoints</Link>
-                    {activeSave && <a className="ui-button ui-button--secondary ui-button--sm" href={`/api/saves/dl/${encodeURIComponent(activeSave.name)}`}><FontAwesomeIcon icon={faHardDrive}/> Download save</a>}
+                    <Link className="ui-button ui-button--secondary ui-button--sm" to={`/saves?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faFloppyDisk}/> Saves & checkpoints</Link>
+                    {activeSave && <a className="ui-button ui-button--secondary ui-button--sm" href={`/api/saves/dl/${encodeURIComponent(activeSave.name)}?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faHardDrive}/> Download save</a>}
                 </>}
             />
 
             <Panel
-                title="Profile runtime"
+                title="Server runtime"
                 headerAction={<ScopeBadge/>}
                 content={<div className="ui-kv-list">
                     <div><span>Release target</span><strong>{targetLabel(activeProfile?.release_target)}</strong></div>
                     <div><span>Game endpoint</span><strong>{activeProfile?.bind_ip || "0.0.0.0"}:{activeProfile?.port || 34197} / UDP</strong></div>
-                    <div><span>Latest checkpoint</span><strong>{checkpointLoadError ? "Unavailable" : latestCheckpoint ? formatDate(latestCheckpoint.created_at) : "None"}</strong></div>
+                    <div><span>Latest checkpoint</span><strong>{!primaryServer || checkpointLoadError ? "Unavailable" : latestCheckpoint ? formatDate(latestCheckpoint.created_at) : "None"}</strong></div>
                 </div>}
                 actions={<>
-                    <Link className="ui-button ui-button--secondary ui-button--sm" to="/server-settings"><FontAwesomeIcon icon={faServer}/> Server configuration</Link>
-                    <Link className="ui-button ui-button--secondary ui-button--sm" to="/releases"><FontAwesomeIcon icon={faCloudArrowDown}/> Version & mode</Link>
+                    <Link className="ui-button ui-button--secondary ui-button--sm" to={`/server-settings?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faServer}/> Server configuration</Link>
+                    <Link className="ui-button ui-button--secondary ui-button--sm" to={`/releases?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faCloudArrowDown}/> Version & mode</Link>
                 </>}
             />
         </div>
 
-        {activeProfile?.id && <PlayerOverviewPanel profileID={activeProfile.id} serverStatus={serverStatus}/>}
+        {!primaryServer && <Alert type="info" className="mt-5">Player-history summaries, fixed checkpoints and factory-map snapshots are not available for additional servers yet. Saves, settings, logs and console controls still target this server.</Alert>}
+        {primaryServer && activeProfile?.id && <PlayerOverviewPanel profileID={activeProfile.id} serverStatus={serverStatus}/>}
 
-        <Panel
+        {primaryServer && <Panel
             className="ui-map-snapshot mt-5"
             title="Factory map"
             help="Generated from a temporary copy of the latest completed save. The exporter is never added to the active profile or written back to the save."
@@ -328,17 +334,17 @@ const Controls = ({serverStatus, canManage = false}) => {
                 title={!mapSnapshotsEnabled ? "Enable factory map snapshots under Server settings first." : undefined}
                 onClick={refreshMapSnapshot}
             ><FontAwesomeIcon icon={faArrowsRotate}/> Generate now</Button> : null}
-        />
+        />}
 
         <Panel
             className="mt-5"
             title="Operations"
             content={<div className="ui-operation-links">
-                <Link to="/mods"><FontAwesomeIcon icon={faPuzzlePiece}/><span><strong>Mods</strong><small>{activeProfile?.mod_count ?? "—"} installed</small></span></Link>
-                <Link to="/game-settings"><FontAwesomeIcon icon={faGamepad}/><span><strong>Game settings</strong><small>Runtime configuration</small></span></Link>
-                {canManage && <Link to="/console"><FontAwesomeIcon icon={faTerminal}/><span><strong>Console</strong><small>Commands and live output</small></span></Link>}
-                <Link to="/logs"><FontAwesomeIcon icon={faFileLines}/><span><strong>Logs</strong><small>Recent Factorio output</small></span></Link>
-                <Link to="/profiles"><FontAwesomeIcon icon={faLayerGroup}/><span><strong>Profiles</strong><small>Switch saved setups</small></span></Link>
+                <Link to={`/mods?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faPuzzlePiece}/><span><strong>Mods</strong><small>{activeProfile?.mod_count ?? "—"} installed</small></span></Link>
+                <Link to={`/game-settings?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faGamepad}/><span><strong>Game settings</strong><small>Runtime configuration</small></span></Link>
+                {canManage && <Link to={`/console?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faTerminal}/><span><strong>Console</strong><small>Commands and live output</small></span></Link>}
+                <Link to={`/logs?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faFileLines}/><span><strong>Logs</strong><small>Recent Factorio output</small></span></Link>
+                <Link to={`/profiles?server=${encodeURIComponent(serverID)}`}><FontAwesomeIcon icon={faLayerGroup}/><span><strong>Profile presets</strong><small>Capture and reuse setups</small></span></Link>
             </div>}
         />
     </>;

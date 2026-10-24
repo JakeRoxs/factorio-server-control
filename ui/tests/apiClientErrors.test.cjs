@@ -10,15 +10,28 @@ const code = transformSync(fs.readFileSync(path.join(__dirname, "../api/client.j
 
 function loadClient() {
     const flashes = [], events = [];
-    let reject;
-    const axios = {create: () => ({interceptors: {response: {use: (_, callback) => { reject = callback; }}}})};
+    let reject, prepare;
+    const axios = {create: () => ({interceptors: {request: {use: callback => { prepare = callback; }}, response: {use: (_, callback) => { reject = callback; }}}})};
     const module = {exports: {}};
-    const window = {flash: message => flashes.push(message), dispatchEvent: event => events.push(event.type)};
+    const window = {location: {search: "?server=2"}, flash: message => flashes.push(message), dispatchEvent: event => events.push(event.type)};
     new Function("require", "module", "exports", "window", "Event", code)(name => {
         assert.equal(name, "axios"); return axios;
     }, module, module.exports, window, Event);
-    return {reject, flashes, events};
+    return {reject, prepare, window, flashes, events};
 }
+
+test("API requests capture the selected server without discarding request headers", () => {
+    const client = loadClient();
+    const first = client.prepare({headers: {Accept: "application/json"}});
+    assert.equal(first.headers["X-FSM-Server-ID"], "2");
+    assert.equal(first.headers.Accept, "application/json");
+    client.window.location.search = "?server=3";
+    assert.equal(client.prepare({}).headers["X-FSM-Server-ID"], "3");
+    assert.equal(first.headers["X-FSM-Server-ID"], "2");
+    assert.equal(client.prepare({url: "/api/servers/1/profiles"}).headers["X-FSM-Server-ID"], "1");
+    client.window.location.search = "";
+    assert.equal(client.prepare({}).headers["X-FSM-Server-ID"], "1");
+});
 
 test("backup transport errors use their actionable message, without manager-offline toast", async () => {
     const client = loadClient();

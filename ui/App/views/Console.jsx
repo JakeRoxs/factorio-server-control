@@ -1,7 +1,9 @@
 import React, {useEffect, useState} from "react";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faPaperPlane, faTerminal} from "@fortawesome/free-solid-svg-icons";
-import socket from "../../api/socket";
+import client from "../../api/client";
+import log from "../../api/resources/log";
+import {useServers} from "../context/ServerContext";
 import PageHeader from "../components/PageHeader";
 import Panel from "../components/Panel";
 import Button from "../components/Button";
@@ -9,36 +11,52 @@ import Alert from "../components/Alert";
 import LogViewport from "../components/LogViewport";
 import ScopeBadge from "../components/ScopeBadge";
 
-const Console = ({serverStatus, socketState}) => {
+const Console = ({serverStatus}) => {
+    const {serverID} = useServers();
     const [logs, setLogs] = useState([]);
     const [command, setCommand] = useState("");
+    const [sending, setSending] = useState(false);
+    const [loadError, setLoadError] = useState("");
     const running = Boolean(serverStatus?.running && !serverStatus?.stopping);
 
     useEffect(() => {
-        const appendLog = line => setLogs(lines => [...lines.slice(-499), line]);
-        const commandError = message => window.flash(message, "red");
-        socket.on("gamelog", appendLog);
-        socket.on("command_error", commandError);
-        socket.emit("log subscribe");
-        return () => {
-            socket.off("gamelog", appendLog);
-            socket.off("command_error", commandError);
-            socket.emit("log unsubscribe");
+        let active = true;
+        const refresh = async () => {
+            try {
+                const lines = await log.tailForServer(serverID);
+                if (active) { setLogs(lines || []); setLoadError(""); }
+            } catch {
+                if (active) setLoadError("Console output could not be loaded.");
+            }
         };
-    }, []);
+        refresh();
+        const timer = window.setInterval(refresh, 3000);
+        return () => {
+            active = false;
+            window.clearInterval(timer);
+        };
+    }, [serverID]);
 
-    const sendCommand = event => {
+    const sendCommand = async event => {
         event.preventDefault();
         const trimmed = command.trim();
-        if (!trimmed || !running || socketState !== "connected") return;
-        socket.emit("command send", trimmed);
-        setCommand("");
+        if (!trimmed || !running || sending) return;
+        setSending(true);
+        try {
+            const response = await client.post(`/api/servers/${encodeURIComponent(serverID)}/command`, {command: trimmed});
+            if (typeof response.data === "string" && response.data) setLogs(lines => [...lines, response.data]);
+            setCommand("");
+        } catch {
+            // The shared API client reports the error; keep the draft for retry.
+        } finally {
+            setSending(false);
+        }
     };
 
     return <>
         <PageHeader title="Console"/>
         {!running && <Alert type="warning" className="mb-5">Start Factorio to open its live console.</Alert>}
-        {running && socketState !== "connected" && <Alert type="danger" className="mb-5">The live connection is reconnecting. Commands remain disabled until it is back.</Alert>}
+        {loadError && <Alert type="danger" className="mb-5">{loadError}</Alert>}
         <Panel
             title="Factorio output"
             headerAction={<div className="flex flex-wrap items-center gap-2"><ScopeBadge/><span className="ui-status-badge">{logs.length} lines</span></div>}
@@ -56,12 +74,12 @@ const Console = ({serverStatus, socketState}) => {
                             className="ui-input pl-10 font-mono"
                             value={command}
                             onChange={event => setCommand(event.target.value)}
-                            disabled={!running || socketState !== "connected"}
+                            disabled={!running || sending}
                             placeholder="/help"
                             aria-label="Console command"
                         />
                     </div>
-                    <Button isSubmit isDisabled={!running || socketState !== "connected" || !command.trim()}><FontAwesomeIcon icon={faPaperPlane}/> Send</Button>
+                    <Button isSubmit isLoading={sending} isDisabled={!running || sending || !command.trim()}><FontAwesomeIcon icon={faPaperPlane}/> Send</Button>
                 </form>
             </>}
         />

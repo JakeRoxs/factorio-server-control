@@ -112,6 +112,19 @@ func ActivateSaveUpload(temporaryPath, name string) error {
 	return activateSaveUploadInDirectory(bootstrap.GetConfig().FactorioSavesDir, temporaryPath, name)
 }
 
+func (server *Server) ActivateSaveUpload(temporaryPath, name string) error {
+	serverLifecycleMutex.Lock()
+	defer serverLifecycleMutex.Unlock()
+	if server.IsBusy() {
+		return ErrServerActive
+	}
+	directory := server.SavesDir
+	if directory == "" {
+		directory = bootstrap.GetConfig().FactorioSavesDir
+	}
+	return activateSaveUploadInDirectory(directory, temporaryPath, name)
+}
+
 func activateSaveUploadInDirectory(directory, temporaryPath, name string) error {
 	if err := ValidatePathElement(name); err != nil {
 		return fmt.Errorf("invalid save name: %w", err)
@@ -169,10 +182,14 @@ func activateSaveUploadInDirectory(directory, temporaryPath, name string) error 
 }
 
 func FindSave(name string) (*Save, error) {
+	return FindSaveForDir(bootstrap.GetConfig().FactorioSavesDir, name)
+}
+
+func FindSaveForDir(directory, name string) (*Save, error) {
 	if err := ValidatePathElement(name); err != nil {
 		return nil, fmt.Errorf("invalid save name: %w", err)
 	}
-	saves, err := ListSaves()
+	saves, err := ListSavesForDir(directory)
 	if err != nil {
 		return nil, fmt.Errorf("error listing saves: %v", err)
 	}
@@ -184,6 +201,23 @@ func FindSave(name string) (*Save, error) {
 	}
 
 	return nil, errors.New("save not found")
+}
+
+func (server *Server) RemoveSave(name string) error {
+	serverLifecycleMutex.Lock()
+	defer serverLifecycleMutex.Unlock()
+	if server.IsBusy() {
+		return ErrServerActive
+	}
+	directory := server.SavesDir
+	if directory == "" {
+		directory = bootstrap.GetConfig().FactorioSavesDir
+	}
+	save, err := FindSaveForDir(directory, name)
+	if err != nil {
+		return err
+	}
+	return os.Remove(filepath.Join(directory, save.Name))
 }
 
 func (s *Save) Remove() error {

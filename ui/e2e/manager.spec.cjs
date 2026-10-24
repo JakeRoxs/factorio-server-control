@@ -23,8 +23,13 @@ test.afterEach(async ({page}) => {
 
 async function navigate(page, label) {
     const nav = page.getByRole("navigation", {name: "Primary navigation"});
+    const mobile = await page.getByRole("button", {name: "Open navigation", exact: true}).isVisible();
     if (!(await nav.isVisible())) await page.getByRole("button", {name: "Open navigation", exact: true}).click();
-    await nav.getByRole("link", {name: label, exact: true}).click();
+    const link = nav.getByRole("link", {name: label, exact: true});
+    const destination = new URL(await link.getAttribute("href"), page.url()).href;
+    await link.click();
+    await expect(page).toHaveURL(destination);
+    if (mobile) await expect(nav).not.toBeVisible();
 }
 
 async function disableNativePointerFocus(page) {
@@ -39,8 +44,31 @@ const routes = [
     ["/", "Overview"], ["/saves", "Saves & checkpoints"], ["/mods", "Mods & mod packs"],
     ["/server-settings", "Server settings"], ["/game-settings", "Game settings"],
     ["/console", "Console"], ["/logs", "Factorio logs"], ["/releases", "Version & mode"],
-    ["/profiles", "Profiles"], ["/servers", "Servers"], ["/user-management", "Users & access"]
+    ["/profiles", "Profile presets"], ["/servers", "Servers"], ["/user-management", "Users & access"]
 ];
+
+test("selected server stays consistent across mods settings logs and writes", async ({page}) => {
+    const writes = [];
+    await page.route("**/api/settings/update", async route => {
+        writes.push({server: route.request().headers()["x-fsm-server-id"], body: route.request().postDataJSON()});
+        await route.fulfill({json: "Saved"});
+    });
+    await page.goto("/mods?server=2");
+    await expect(page.getByRole("heading", {name: "Mods & mod packs", exact: true})).toBeVisible();
+    await navigate(page, "Server settings");
+    await expect(page).toHaveURL(/server=2/);
+    const name = page.getByRole("textbox", {name: "Name", exact: true});
+    await expect(name).toHaveValue("Second world");
+    await name.fill("Second world edited");
+    await page.getByRole("button", {name: "Save changes", exact: true}).click();
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0].server).toBe("2");
+    expect(writes[0].body.name).toBe("Second world edited");
+    await navigate(page, "Logs");
+    await expect(page).toHaveURL(/server=2/);
+    await expect(page.getByText("Second server output", {exact: false})).toBeVisible();
+    await expect(page.getByText("Synthetic test log", {exact: false})).toHaveCount(0);
+});
 
 test("existing running instance is visible as one managed server", async ({page}) => {
     await page.setExtraHTTPHeaders({"x-fsm-test-scenario": "running"});
@@ -59,9 +87,10 @@ test("running-server allocator preference survives navigation and reload without
     const server = () => ({id: "1", name: "Existing server", port: 34197, bindip: "0.0.0.0", running: true, use_mimalloc: enabled});
     await page.route("**/api/servers", route => route.fulfill({json: [server()]}));
     await page.route("**/api/servers/1", async route => {
+        if (route.request().method() === "GET") return route.fulfill({json: server()});
         expect(route.request().method()).toBe("PUT");
         const body = route.request().postDataJSON();
-        expect(Object.keys(body).sort()).toEqual(["name", "use_mimalloc"]);
+        expect(Object.keys(body).sort()).toEqual(["use_mimalloc"]);
         enabled = body.use_mimalloc;
         mutations.push(route.request().url());
         await route.fulfill({json: server()});
@@ -71,19 +100,17 @@ test("running-server allocator preference survives navigation and reload without
             mutations.push(request.url());
         }
     });
-    await page.goto("/servers");
-    await page.getByRole("button", {name: "Edit", exact: true}).click();
+    await page.goto("/server-settings?server=1");
     await expect(page.getByText("Saved for the next server start.", {exact: false})).toBeVisible();
     await page.getByRole("checkbox", {name: "Use mimalloc memory allocator (Linux only)"}).check();
-    await page.getByRole("button", {name: "Save Changes", exact: true}).click();
+    await page.getByRole("button", {name: "Save startup configuration", exact: true}).click();
     await expect.poll(() => enabled).toBe(true);
     await navigate(page, "Overview");
-    await navigate(page, "Servers");
+    await navigate(page, "Server settings");
     await page.reload();
-    await page.getByRole("button", {name: "Edit", exact: true}).click();
     await expect(page.getByRole("checkbox", {name: "Use mimalloc memory allocator (Linux only)"})).toBeChecked();
     expect(mutations).toHaveLength(1);
-    await expect(page.getByRole("button", {name: "Stop", exact: true})).toBeVisible();
+    await expect(page.getByRole("button", {name: "Save & stop", exact: true})).toBeVisible();
 });
 
 test("reusable presets cannot be selected as legacy world snapshots", async ({page}) => {
@@ -95,14 +122,9 @@ test("reusable presets cannot be selected as legacy world snapshots", async ({pa
     });
     await page.goto("/profiles");
     const card = page.locator("article").filter({has: page.getByRole("heading", {name: "Reusable test preset", exact: true})});
-    await expect(card.getByText("Reusable preset", {exact: true})).toBeVisible();
+    await expect(card.getByRole("button", {name: /Apply to/})).toBeVisible();
     await expect(card.getByRole("button", {name: "Activate", exact: true})).toHaveCount(0);
-    const picker = page.getByRole("button", {name: /Active profile/});
-    await picker.click();
-    await expect(page.locator("#profile-switch-menu").getByRole("button", {name: /Reusable test preset/})).toHaveCount(0);
-    await picker.click();
-    await card.getByRole("button", {name: "Use on a server", exact: true}).click();
-    await expect(page.getByRole("heading", {name: "Servers", exact: true})).toBeVisible();
+    await expect(page.locator("#profile-switch-menu")).toHaveCount(0);
     await expect(page.locator('[aria-label="Factorio process controls"]')).toHaveCount(0);
 });
 
@@ -125,13 +147,11 @@ test("preset capture targets the selected stopped server instead of the running 
         captured = true;
         await route.fulfill({json: {profiles: [{id: "captured", name: "From server two", is_global: true}]}});
     });
-    await page.goto("/servers");
-    await page.getByRole("button", {name: "Global Profiles", exact: true}).click();
-    await page.getByRole("button", {name: "Capture Preset", exact: true}).click();
-    await expect(page.getByRole("button", {name: "Create preset", exact: true})).toBeDisabled();
+    await page.goto("/profiles");
+    await expect(page.getByRole("button", {name: "Capture preset", exact: true})).toBeDisabled();
     await page.getByLabel("Source server", {exact: true}).selectOption("2");
-    await page.getByLabel("Name", {exact: true}).fill("From server two");
-    await page.getByRole("button", {name: "Create preset", exact: true}).click();
+    await page.locator("#preset-name").fill("From server two");
+    await page.getByRole("button", {name: "Capture preset", exact: true}).click();
     await expect.poll(() => captured).toBe(true);
     await expect(page.getByText("From server two", {exact: true})).toBeVisible();
 });
@@ -163,7 +183,7 @@ test("navigation loads only the requested page and preserves the dark palette", 
     await navigate(page, "Mods");
     await expect(page.getByRole("heading", {level: 1, name: "Mods & mod packs"})).toBeVisible();
     expect(chunks.some(url => /\/mods\./.test(url))).toBe(true);
-    await expect(page.locator(".ui-profile-switcher__icon")).toHaveCSS("color", "rgb(244, 163, 64)");
+    await expect(page.locator(".ui-sidebar")).toHaveCSS("background-color", "rgba(15, 20, 27, 0.98)");
     await page.goBack();
     await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
 });
@@ -215,11 +235,17 @@ test("viewer pages do not expose mutations or the admin console", async ({page})
     await page.goto("/saves");
     await expect(page.getByRole("link", {name: "Download demo.zip"})).toBeVisible();
     await expect(page.getByRole("button", {name: "Delete demo.zip"})).toHaveCount(0);
-    await page.goto("/console");
-    await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
-    await page.goto("/user-management");
+    await expect(page.getByRole("link", {name: "Console", exact: true})).toHaveCount(0);
+    await navigate(page, "Account & access");
     await expect(page.getByRole("heading", {level: 1, name: "Account & access"})).toBeVisible();
     await expect(page.getByRole("heading", {name: "Create user"})).toHaveCount(0);
+});
+
+test("viewer console redirect retains the selected server", async ({page}) => {
+    await page.setExtraHTTPHeaders({"X-FSM-Test-Scenario": "viewer"});
+    await page.goto("/console?server=2");
+    await expect(page).toHaveURL(/server=2/);
+    await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
 });
 
 test("viewer cannot see server mutation controls on the servers page", async ({page}) => {
@@ -281,15 +307,15 @@ test("failed settings save preserves the draft", async ({page}) => {
 });
 
 test("a failed log request can be retried without reloading the application", async ({page}) => {
-    await page.route("**/api/log/tail**", route => route.fulfill({status: 503, contentType: "text/plain", body: "Unavailable"}));
+    await page.route("**/api/servers/1/log/tail**", route => route.fulfill({status: 503, contentType: "text/plain", body: "Unavailable"}));
     await page.goto("/logs");
     await expect(page.getByRole("alert")).toContainText("Factorio logs could not be loaded");
-    await page.unroute("**/api/log/tail**");
+    await page.unroute("**/api/servers/1/log/tail**");
     await page.getByRole("button", {name: "Refresh", exact: true}).click();
     await expect(page.getByText("Synthetic test log", {exact: false})).toBeVisible();
 });
 
-test("profile picker works from the keyboard and links to new profile setup", async ({page}) => {
+test("server picker works from the keyboard without profile activation", async ({page}) => {
     await disableNativePointerFocus(page);
     await page.goto("/");
     await expect(page.getByRole("heading", {level: 1, name: "Overview"})).toBeVisible();
@@ -299,12 +325,11 @@ test("profile picker works from the keyboard and links to new profile setup", as
         await openNavigation.click();
         await expect(page.getByRole("button", {name: "Close navigation", exact: true})).toBeFocused();
     }
-    const picker = page.getByRole("button", {name: /Active profile \(Server 1 snapshot\) Demo factory/});
+    const picker = page.getByLabel("Selected server", {exact: true});
     await picker.focus();
+    await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(picker).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("Escape");
-    await expect(picker).toHaveAttribute("aria-expanded", "false");
+    await expect(page).toHaveURL(/server=2/);
     await expect(picker).toBeFocused();
     if (compact) {
         await page.keyboard.press("Escape");
@@ -312,12 +337,9 @@ test("profile picker works from the keyboard and links to new profile setup", as
         await openNavigation.click();
         await expect(page.getByRole("button", {name: "Close navigation", exact: true})).toBeFocused();
     }
-    await picker.focus();
-    await page.keyboard.press("Enter");
-    await expect(picker).toHaveAttribute("aria-expanded", "true");
-    await page.getByRole("link", {name: "New profile", exact: true}).click();
-    await expect(page).toHaveURL(/\/profiles\?new=fresh$/);
-    await expect(page.getByRole("heading", {level: 1, name: "Profiles"})).toBeVisible();
+    await navigate(page, "Profile presets");
+    await expect(page).toHaveURL(/\/profiles\?server=2$/);
+    await expect(page.getByRole("heading", {level: 1, name: "Profile presets"})).toBeVisible();
 });
 
 test("anonymous deep links lead to login without loading protected page chunks", async ({page}) => {

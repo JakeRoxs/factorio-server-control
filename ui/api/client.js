@@ -9,6 +9,16 @@ const client = Axios.create({
     }
 });
 
+client.interceptors.request.use(config => {
+    const explicitServer = config.url?.match(/^\/api\/servers\/([^/?]+)/)?.[1];
+    const serverID = explicitServer && explicitServer !== "next"
+        ? decodeURIComponent(explicitServer)
+        : new URLSearchParams(window.location.search).get("server") || "1";
+    config.headers = config.headers || {};
+    config.headers["X-FSM-Server-ID"] = serverID;
+    return config;
+}, undefined, {synchronous: true});
+
 client.interceptors.response.use(res => res, err => {
     if (err.code === "ERR_CANCELED") return Promise.reject(err);
     const status = err.response?.status;

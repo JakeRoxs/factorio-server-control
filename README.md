@@ -6,7 +6,7 @@
 
 # Factorio Server Control
 
-A self-hosted web interface for operating one Factorio dedicated server safely: profiles, saves, fixed checkpoints, mods, game versions, Space Age, world creation, logs, users and server controls in one responsive UI.
+A self-hosted web interface for operating Factorio dedicated servers: server-specific worlds, mods, settings, logs and controls, plus reusable profile presets and manager-wide administration in one responsive UI. See the [runtime model](#runtime-model) for shared-engine and platform limitations.
 
 > [!NOTE]
 > This repository is a modernized fork of the original **Factorio Server Manager** project, [OpenFactorioServerManager/factorio-server-manager](https://github.com/OpenFactorioServerManager/factorio-server-manager). The original project, its authors and its contributors remain the source of the manager this fork builds on. See [Origin and attribution](#origin-and-attribution).
@@ -18,19 +18,20 @@ A self-hosted web interface for operating one Factorio dedicated server safely: 
 
 ### Safer server operations
 
-- Event-driven status updates without disruptive full-page polling.
-- Start, save-and-stop and force-stop controls available throughout the active-profile UI.
+- Server-scoped status refreshes without disruptive full-page reloads.
+- Start, save-and-stop and force-stop controls target the selected server throughout its workspace.
 - Live connected-player state plus snapshot-derived playtime ranking with explicit offline and freshness states.
 - Persistent internal autostart that restores the active profile after a container restart.
 - Staged Factorio release replacement with validation and rollback while persistent game data stays mounted.
 - Upload and path hardening, capped/redacted logs, local-only RCON and refusal to start with disposable manager or game-data paths.
 
-### Independent server profiles
+### Servers and profile presets
 
-- Named profiles for switching one stopped Factorio runtime between different saves, mods, settings, game modes and exact Factorio versions.
+- A primary server selector switches the management workspace without activating profiles, changing worlds or stopping games. Each server retains its own startup configuration.
+- Configure a stopped server's mods and settings, capture a reusable profile preset, then apply it to another stopped server without replacing that server's world, ports or credentials.
 - Automatic, idempotent migration of an existing installation into `Current setup`.
-- Profile cloning, clean-profile creation, rename, activation and deletion.
-- Transactional profile switching with staging, validation and rollback; switching never starts Factorio implicitly.
+- Legacy world-snapshot cloning, creation, rename, activation and deletion remain under **Profile presets → Legacy world snapshots and backups** for Server 1.
+- Transactional legacy snapshot activation and preset application use staging, validation and rollback; neither starts Factorio implicitly.
 - Portable profile backups with an import preview, conflict-safe names and optional saves/checkpoints. Imports create new inactive profiles without modifying the existing installation.
 
 ### Saves, worlds and checkpoints
@@ -69,7 +70,7 @@ A self-hosted web interface for operating one Factorio dedicated server safely: 
 ### Modern interface and deployment
 
 - Responsive **Foundry Night** UI for desktop and mobile.
-- Persistent active-profile context, exact UI version/revision and cache-busted frontend assets.
+- Server-first desktop/mobile navigation, explicit selected-server context, exact UI version/revision and cache-busted frontend assets.
 - On-demand page loading with explicit recovery after a failed asset request; no automatic reload discards open work. Supported browsers: Chrome 111+, Safari 16.4+ or Firefox 128+.
 - Docker and Docker Compose builds produced directly from this repository.
 - `linux/amd64` production image matching the official Factorio headless server platform.
@@ -130,7 +131,7 @@ Manager-wide Mod Portal dependency defaults:
 
 ## Runtime model
 
-One manager process deliberately controls one Factorio process and one active profile. Profiles are independent stored setups, not simultaneous game servers.
+One manager process can control multiple independent Factorio runtimes on Linux, each with dedicated storage, game ports and RCON connections. Runtimes currently share the installed Factorio executable. Reusable profile presets are setup templates, not the navigation context or additional processes. Concurrent Windows launch remains unavailable pending isolated console control.
 
 To run several Factorio servers at once, run several manager containers. Every container needs unique host TCP/UDP ports and completely separate manager and game-data mounts. Never point two live containers at the same `/opt/fsm-data` or `/opt/factorio` data.
 
@@ -197,15 +198,19 @@ The first profile-capable start copies an existing unprofiled setup into `Curren
 
 **Experimental server-scoped presets:** Applying a template from **Servers** differs from legacy profile activation: it replaces mods and copies supported gameplay/autosave settings while retaining the target's world, selected save, identity, credentials, visibility, access lists and local config paths. The source definition is unchanged and can be applied to another server. Changes are staged inside the destination filesystems and rolled back if activation or catalog persistence fails. Supported settings are `max_players`, `ignore_player_limit_for_returning_players`, `autosave_interval`, `autosave_slots`, `autosave_only_on_server`, `non_blocking_saving`, `afk_autokick_interval`, `auto_pause`, `auto_pause_when_players_connect`, `only_admins_can_pause_the_game` and `allow_commands`; other settings remain target-local.
 
-Use **Servers → Global Profiles → Capture Preset** to choose a stopped source server. New captures contain only mods and the supported settings, have no saved-world directories or source credentials, and are marked as preset-only definitions. Apply them from a server card rather than selecting them in the legacy snapshot picker. Older world-bearing snapshots, including earlier global templates, retain their existing data and legacy activation/export behavior; this change does not migrate or delete them. The legacy process strip and snapshot picker identify Server 1 explicitly and are not a selector for the other managed servers.
+Use **Profile presets → Capture profile preset** to choose a stopped source server. New captures contain only mods and the supported settings, have no saved-world directories or source credentials, and are marked as preset-only definitions. Apply them to the server selected in navigation. Older world-bearing snapshots retain their existing data and legacy activation/export behavior in the expandable **Legacy world snapshots and backups** section for Server 1; this change does not migrate or delete them.
+
+For daily operation, choose **Selected server** in navigation or **Servers → Open server**. The selection is carried in the page URL (`?server=<id>`), including links between management pages. Status, startup controls and console commands address that server. Switching is read-only and is available to viewers even while games are running. **Server settings → Startup & network** contains the allocator preference alongside startup options; it is saved for the next start and never restarts a live game.
+
+Additional-server support is deliberately bounded: basic save uploads/downloads/deletion, multiplayer and startup settings, mod uploads/toggles/individual updates/downloads, logs and console are server-targeted. Fixed checkpoints, player-history summaries, factory-map snapshots, independent engine/mode switching, world-generation preview/options, portal dependency installation, mod-pack application, startup-setting evaluation and backup restore still require the default server. Their UI is unavailable for additional servers, and the API rejects unsupported secondary operations instead of touching Server 1. Use a configured source server and reusable presets for shared mod setups. Container autostart and Mod Portal preferences remain explicitly manager-wide.
 
 Preset application requires a stopped target and a known compatible Factorio version. It validates mod archives, version pins and enabled dependencies without downloading or changing the installed engine. Built-in feature presets are currently rejected until target-scoped feature availability is implemented. Opaque `mod-settings.dat` values may still contain private mod data. Basic Linux multi-runtime creation, lifecycle isolation and restoration have real-engine regression coverage, but full per-server management APIs/UI, independent operation gates, feature-preset application and legacy migration remain unfinished. Existing world-bearing snapshots remain intact.
 
 **Managed runtime boundary:** Additional server instances store their own saves, mods, settings, admin list, runtime configuration and logs under `/opt/fsm-data/servers/<id>/`. Creation does not clone Server 1's world, account credentials or access lists. Deletion removes the catalog entry but retains the data; subsequent creation skips IDs with retained storage rather than assigning an old private world to a new server. Include these directories in manager-data backups.
 
-Instances currently share the installed Factorio executable and read-only game data. An exact version target must match that installation; Stable/Latest labels do not create independent installations. Changing the shared engine or activating a legacy world snapshot requires all games to be stopped. Additional games need their own UDP ports published by the container deployment; the single-port examples do not expose those ports automatically. Creating an empty instance does not provision a world, and the wider save-upload/world-generation pages still target Server 1 until server selection is implemented.
+Instances currently share the installed Factorio executable and read-only game data. An exact version target must match that installation; Stable/Latest labels do not create independent installations. Changing the shared engine or activating a legacy world snapshot requires all games to be stopped. Additional games need their own UDP ports published by the container deployment; the single-port examples do not expose those ports automatically. Creating an empty instance does not provision a world; open its workspace to configure it and upload a save. The full world-generation preview/options UI currently remains default-server-only.
 
-Linux process isolation is exercised with two real game processes in the disposable integration tests. Concurrent Windows launch is currently rejected because its legacy graceful-stop implementation shares a console; isolated Windows console control remains unfinished. Additional runtime logs/status use server-specific rooms rather than contaminating Server 1's feed, but the complete frontend subscription/navigation work is still pending.
+Linux process isolation is exercised with two real game processes in the disposable integration tests. Concurrent Windows launch is currently rejected because its legacy graceful-stop implementation shares a console; isolated Windows console control remains unfinished. The UI refreshes selected-server status and console output through explicit server-scoped HTTP requests; console commands are never sent to the legacy global WebSocket command channel.
 
 ### Profile and mod backups
 

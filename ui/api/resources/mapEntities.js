@@ -16,7 +16,7 @@ const loadMapEntities = async (surfaceID, generatedAt, signal) => {
     const url = `/api/map-snapshot/surfaces/${encodeURIComponent(surfaceID)}/entities?v=${encodeURIComponent(generatedAt || "")}`;
     const response = await fetch(url, {
         credentials: "same-origin",
-        headers: {Accept: "application/x-ndjson"},
+        headers: {Accept: "application/x-ndjson", "X-FSM-Server-ID": new URLSearchParams(window.location.search).get("server") || "1"},
         signal
     });
     if (response.status === 401) window.dispatchEvent(new Event(authenticationRequiredEvent));

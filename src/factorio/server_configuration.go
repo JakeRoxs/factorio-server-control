@@ -17,11 +17,15 @@ type ServerConfigurationUpdate struct {
 	Autostart        *bool   `json:"autostart"`
 	WatchdogInterval *int    `json:"watchdog_interval"`
 	UseMimalloc      *bool   `json:"use_mimalloc"`
+	SelectedSave     *string `json:"selected_save"`
 }
 
 // Allocator selection is a next-start preference, not a live process mutation.
 // Publish the candidate only after the catalog has been persisted successfully.
 func (m *ServerManager) UpdateServerConfiguration(id string, update ServerConfigurationUpdate) (*Server, error) {
+	if id == DefaultServerID && update.SelectedSave != nil {
+		return nil, fmt.Errorf("%w: default-server startup must be saved with its legacy world snapshot", ErrInvalidServerConfiguration)
+	}
 	serverLifecycleMutex.Lock()
 	defer serverLifecycleMutex.Unlock()
 	m.mu.Lock()
@@ -33,7 +37,7 @@ func (m *ServerManager) UpdateServerConfiguration(id string, update ServerConfig
 		return nil, ErrServerMissing
 	}
 	if server.starting || server.Stopping || server.Running &&
-		(update.BindIP != nil || update.Port != nil || update.Autostart != nil || update.WatchdogInterval != nil) {
+		(update.BindIP != nil || update.Port != nil || update.Autostart != nil || update.WatchdogInterval != nil || update.SelectedSave != nil) {
 		return nil, ErrServerActive
 	}
 	candidate := *server
@@ -73,6 +77,15 @@ func (m *ServerManager) UpdateServerConfiguration(id string, update ServerConfig
 	if update.UseMimalloc != nil {
 		candidate.UseMimalloc = *update.UseMimalloc
 	}
+	if update.SelectedSave != nil {
+		name := *update.SelectedSave
+		if name != "" {
+			if _, err := FindSaveForDir(server.SavesDir, name); err != nil {
+				return nil, fmt.Errorf("%w: selected save is unavailable", ErrInvalidServerConfiguration)
+			}
+		}
+		candidate.Savefile = name
+	}
 	for i := range m.catalog.Servers {
 		if m.catalog.Servers[i].ID != id {
 			continue
@@ -80,6 +93,7 @@ func (m *ServerManager) UpdateServerConfiguration(id string, update ServerConfig
 		previous := m.catalog.Servers[i]
 		next := previous
 		next.Name, next.BindIP, next.Port = candidate.Name, candidate.BindIP, candidate.Port
+		next.Savefile = candidate.Savefile
 		next.Autostart, next.WatchdogInterval, next.UseMimalloc = candidate.Autostart, candidate.WatchdogInterval, candidate.UseMimalloc
 		m.catalog.Servers[i] = next
 		if err := m.saveCatalogLocked(); err != nil {
@@ -87,6 +101,7 @@ func (m *ServerManager) UpdateServerConfiguration(id string, update ServerConfig
 			return nil, err
 		}
 		server.Name, server.BindIP, server.Port = next.Name, next.BindIP, next.Port
+		server.Savefile = next.Savefile
 		server.Autostart, server.WatchdogInterval, server.UseMimalloc = next.Autostart, next.WatchdogInterval, next.UseMimalloc
 		response := *server
 		return &response, nil

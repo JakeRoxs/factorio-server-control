@@ -1,5 +1,4 @@
 import React, {useCallback, useEffect, useState} from "react";
-import {Link, useSearchParams} from "react-router-dom";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faDownload, faHardDrive, faPlus, faRotate, faTrashAlt} from "@fortawesome/free-solid-svg-icons";
 import savesResource from "../../../api/resources/saves";
@@ -8,10 +7,11 @@ import Panel from "../../components/Panel";
 import NewWorldForm from "./components/NewWorldForm";
 import UploadSaveForm from "./components/UploadSaveForm";
 import IconButton from "../../components/IconButton";
+import Button from "../../components/Button";
 import Alert from "../../components/Alert";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import Checkpoints from "./components/Checkpoints";
-import {useProfiles} from "../../context/ProfileContext";
+import {useServers} from "../../context/ServerContext";
 import ScopeBadge from "../../components/ScopeBadge";
 import EmptyState from "../../components/EmptyState";
 
@@ -22,9 +22,9 @@ const formatSize = bytes => {
 };
 
 const Saves = ({serverStatus, canManage = false}) => {
-    const [searchParams] = useSearchParams();
-    const serverID = searchParams.get("server") || null;
-    const {activeProfile, refreshProfiles} = useProfiles();
+    const {serverID, selectedServer} = useServers();
+    const primaryServer = serverID === "1";
+    const [showNewWorld, setShowNewWorld] = useState(false);
     const [saves, setSaves] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
@@ -39,15 +39,14 @@ const Saves = ({serverStatus, canManage = false}) => {
                 ? await savesResource.listForServer(serverID)
                 : await savesResource.list();
             setSaves(result || []);
-            refreshProfiles().catch(() => undefined);
         } catch (error) {
-            const message = error?.response?.data || "Saves could not be loaded.";
-            setLoadError(typeof message === "string" ? message : "Saves could not be loaded.");
+            const message = typeof error?.response?.data === "string" ? error.response.data : "Saves could not be loaded.";
+            setLoadError(message);
             window.flash(message, "red");
         } finally {
             setIsLoading(false);
         }
-    }, [refreshProfiles, serverID]);
+    }, [serverID]);
 
     useEffect(() => { updateList(); }, [updateList]);
 
@@ -61,7 +60,7 @@ const Saves = ({serverStatus, canManage = false}) => {
         <table className="ui-table">
             <thead><tr><th>Name</th><th>Last modified</th><th>Size</th><th className="text-right">Actions</th></tr></thead>
             <tbody>{saves.map(save => {
-                const selected = save.name === activeProfile?.selected_save;
+                const selected = save.name === selectedServer?.savefile;
                 return <tr key={save.name}>
                     <td><div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-white">{save.name}</span>
@@ -70,7 +69,7 @@ const Saves = ({serverStatus, canManage = false}) => {
                     <td>{new Date(save.last_mod).toLocaleString()}</td>
                     <td>{formatSize(save.size)}</td>
                     <td><div className="flex justify-end gap-2">
-                        <a className="ui-icon-button" href={`/api/saves/dl/${encodeURIComponent(save.name)}`} aria-label={`Download ${save.name}`} title="Download save">
+                        <a className="ui-icon-button" href={`/api/saves/dl/${encodeURIComponent(save.name)}?server=${encodeURIComponent(serverID)}`} aria-label={`Download ${save.name}`} title="Download save">
                             <FontAwesomeIcon icon={faDownload}/>
                         </a>
                         {canManage && <IconButton
@@ -93,9 +92,7 @@ const Saves = ({serverStatus, canManage = false}) => {
             actions={<div className="flex flex-wrap gap-2">
                 <ScopeBadge/>
                 <div className="ui-status-badge">{isLoading || loadError ? "Saves unavailable" : `${saves.length} ${saves.length === 1 ? "save" : "saves"}`}</div>
-                {canManage && !isLoading && !loadError && saves.length > 0 && <Link className="ui-button ui-button--success ui-button--sm" to="/profiles?new=fresh">
-                    <FontAwesomeIcon icon={faPlus}/> New profile
-                </Link>}
+                {canManage && primaryServer && saves.length > 0 && <Button size="sm" isDisabled={mutationsLocked} onClick={() => setShowNewWorld(value => !value)}><FontAwesomeIcon icon={faPlus}/> New world</Button>}
             </div>}
         />
 
@@ -107,7 +104,9 @@ const Saves = ({serverStatus, canManage = false}) => {
                 : "Stop Factorio before uploading, creating or deleting saves."} Downloads remain available.
         </Alert>}
 
-        {isLoading && <Panel className="mb-5" content={<div className="ui-empty-state"><div><FontAwesomeIcon className="text-orange" icon={faHardDrive} spin/><p className="mt-3">Loading profile saves…</p></div></div>}/>}
+        {!primaryServer && <Alert type="info" className="mb-5">Uploads, downloads and deletion target this server. Fixed checkpoints and world-generation previews/options are currently available for Server 1 only.</Alert>}
+
+        {isLoading && <Panel className="mb-5" content={<div className="ui-empty-state"><div><FontAwesomeIcon className="text-orange" icon={faHardDrive} spin/><p className="mt-3">Loading server saves...</p></div></div>}/>}
 
         {!isLoading && loadError && <Panel className="mb-5" content={<div>
             <Alert type="danger" className="mb-4">{loadError}</Alert>
@@ -115,13 +114,13 @@ const Saves = ({serverStatus, canManage = false}) => {
         </div>}/>}
 
         {!isLoading && !loadError && saves.length === 0 && <>
-            {canManage ? <><Panel
+            {canManage ? <>{primaryServer && <Panel
                 className="mb-5"
                 title="Create world"
                 content={mutationsLocked
                     ? <Alert type="warning">Wait for a confirmed stopped status before creating a new world.</Alert>
                     : <NewWorldForm onSuccess={updateList}/>}
-            />
+            />}
             <Panel
                 className="mb-5"
                 title="Upload existing save"
@@ -129,7 +128,7 @@ const Saves = ({serverStatus, canManage = false}) => {
             /></> : <Panel
                 className="mb-5"
                 headerAction={<ScopeBadge/>}
-                content={<EmptyState icon={faHardDrive} title="No saves in this profile"/>}
+                content={<EmptyState icon={faHardDrive} title="No saves on this server"/>}
             />}
         </>}
 
@@ -140,7 +139,8 @@ const Saves = ({serverStatus, canManage = false}) => {
                 content={saveTable}
             />
 
-            <Checkpoints serverStatus={serverStatus} onRestore={updateList} canManage={canManage}/>
+            {primaryServer && <Checkpoints serverStatus={serverStatus} onRestore={updateList} canManage={canManage}/>}
+            {primaryServer && showNewWorld && canManage && <Panel className="mb-5" title="Create world" content={mutationsLocked ? <Alert type="warning">Stop this server before creating a world.</Alert> : <NewWorldForm onSuccess={async () => { await updateList(); setShowNewWorld(false); }}/>}/>}
 
             {canManage && <Panel
                 className="mb-5"
@@ -151,7 +151,7 @@ const Saves = ({serverStatus, canManage = false}) => {
 
         <ConfirmDialog
             title="Delete save?"
-            content={saveToDelete ? `${saveToDelete.name} will be permanently removed from ${activeProfile?.name || "the active profile"}. Other profiles are not changed.` : ""}
+            content={saveToDelete ? `${saveToDelete.name} will be permanently removed from ${selectedServer?.name || "the selected server"}. Other servers are not changed.` : ""}
             isOpen={Boolean(saveToDelete)}
             close={() => setSaveToDelete(null)}
             onSuccess={() => deleteSave(saveToDelete)}

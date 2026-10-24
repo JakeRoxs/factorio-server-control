@@ -304,6 +304,19 @@ func (mods *Mods) UploadMod(file multipart.File, header *multipart.FileHeader) e
 }
 
 func lockActiveModMutation(destination string) (func(), error) {
+	if manager := GetServerManager(); manager != nil {
+		serverLifecycleMutex.Lock()
+		for _, server := range manager.ListServers() {
+			if filepath.Clean(server.ModsDir) == filepath.Clean(destination) {
+				if server.IsBusy() {
+					serverLifecycleMutex.Unlock()
+					return nil, ErrServerActive
+				}
+				return serverLifecycleMutex.Unlock, nil
+			}
+		}
+		serverLifecycleMutex.Unlock()
+	}
 	activeMods := profileActiveDirectories()["mods"]
 	if activeMods == "" || filepath.Clean(destination) != filepath.Clean(activeMods) {
 		return func() {}, nil
@@ -349,10 +362,10 @@ func SaveModConfiguration(destination, filename string, source io.Reader, maximu
 		}
 	}
 
-	serverLifecycleMutex.Lock()
-	defer serverLifecycleMutex.Unlock()
-	if GetFactorioServer().IsBusy() {
-		return ErrServerActive
+	unlock, err := lockActiveModMutation(destination)
+	if err != nil {
+		return err
 	}
+	defer unlock()
 	return writeFileAtomically(filepath.Join(destination, filename), contents.Bytes(), 0644)
 }

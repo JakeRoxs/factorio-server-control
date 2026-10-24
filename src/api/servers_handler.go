@@ -129,6 +129,9 @@ func GetServerHandler(w http.ResponseWriter, r *http.Request) {
 
 	id := mux.Vars(r)["serverID"]
 	if id == "" {
+		id = mux.Vars(r)["selectedServerID"]
+	}
+	if id == "" {
 		id = factorio.DefaultServerID
 	}
 
@@ -263,6 +266,9 @@ func DeleteServerHandler(w http.ResponseWriter, r *http.Request) {
 
 func serverFromRequest(r *http.Request) (*factorio.Server, bool) {
 	id := mux.Vars(r)["serverID"]
+	if id == "" {
+		id = mux.Vars(r)["selectedServerID"]
+	}
 	if id == "" {
 		id = factorio.DefaultServerID
 	}

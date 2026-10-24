@@ -76,3 +76,22 @@ test("a current failed refresh remains retryable and does not discard profile da
     assert.equal(view.current.error, "");
     assert.equal(view.current.activeProfile.id, "updated");
 });
+
+test("legacy profile metadata never replaces the selected server's identity or startup values", async t => {
+    const {ProfileProvider, useProfiles} = loadModule("App/context/ProfileContext.jsx", {
+        react: React,
+        "../../api/resources/profiles": {list: async () => state("legacy-world")}
+    });
+    let current, root;
+    function Probe() { current = useProfiles(); return null; }
+    const server = {id: "2", name: "Second", savefile: "second.zip", port: 34198, bindip: "127.0.0.2"};
+    await act(async () => { root = create(React.createElement(ProfileProvider, {server}, React.createElement(Probe))); });
+    t.after(() => act(() => root.unmount()));
+    assert.equal(current.activeProfile.id, "server-2");
+    assert.equal(current.activeProfile.name, "Second");
+    assert.equal(current.activeProfile.selected_save, "second.zip");
+    assert.equal(current.activeProfile.port, 34198);
+    await act(async () => root.update(React.createElement(ProfileProvider, {server: {...server, id: "1", name: "First", profile_id: "assigned-preset"}}, React.createElement(Probe))));
+    assert.equal(current.activeProfile.id, "legacy-world", "default-only snapshot operations retain their persisted legacy identity");
+    assert.equal(current.activeProfile.name, "First");
+});

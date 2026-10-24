@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useState} from "react";
-import {useSearchParams} from "react-router-dom";
+import {useServers} from "../context/ServerContext";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faArrowsRotate, faFileLines} from "@fortawesome/free-solid-svg-icons";
 import log from "../../api/resources/log";
@@ -11,8 +11,7 @@ import Alert from "../components/Alert";
 import ScopeBadge from "../components/ScopeBadge";
 
 const Logs = () => {
-    const [searchParams] = useSearchParams();
-    const serverID = searchParams.get("server") || null;
+    const {serverID} = useServers();
     const [logs, setLogs] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");

@@ -2,7 +2,7 @@ import React from "react";
 import {faSpinner} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 
-const Button = ({children, type = "default", onClick, isSubmit, className = "", size, isLoading, isDisabled = false, title, form}) => {
+const Button = ({children, type = "default", onClick, isSubmit, className = "", size, isLoading, isDisabled = false, title, form, "aria-label": ariaLabel}) => {
     const variant = ["success", "danger", "secondary", "ghost"].includes(type) ? type : "default";
 
     return (
@@ -18,6 +18,7 @@ const Button = ({children, type = "default", onClick, isSubmit, className = "", 
             type={isSubmit ? "submit" : "button"}
             form={form}
             aria-busy={isLoading || undefined}
+            aria-label={ariaLabel}
             title={title}
         >
             {isLoading && <FontAwesomeIcon icon={faSpinner} spin={true}/>} {children}

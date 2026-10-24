@@ -38,8 +38,8 @@ const ModPack = ({modPack, reloadModPacks, factorioVersion, reloadMods, profileL
                 <ButtonLink size="sm" type="ghost" href={`/api/mods/packs/${encodeURIComponent(modPack.name)}/download`}>
                     <FontAwesomeIcon icon={faDownload}/> Download
                 </ButtonLink>
-                {!readOnly && <Button size="sm" type="secondary" isDisabled={profileLocked || isLoading} title={profileLocked ? "Stop Factorio before adding mods" : undefined} onClick={() => setDialog("merge")}>Add to profile</Button>}
-                {!readOnly && <Button size="sm" type="secondary" isLoading={isLoading} isDisabled={profileLocked} title={profileLocked ? "Stop Factorio before replacing the active profile's mods" : undefined} onClick={() => setDialog("load")}><FontAwesomeIcon icon={faPlay}/> Replace mods</Button>}
+                {!readOnly && <Button size="sm" type="secondary" isDisabled={profileLocked || isLoading} title={profileLocked ? "Stop this server before adding mods" : undefined} onClick={() => setDialog("merge")}>Add to server</Button>}
+                {!readOnly && <Button size="sm" type="secondary" isLoading={isLoading} isDisabled={profileLocked} title={profileLocked ? "Stop this server before replacing its mods" : undefined} onClick={() => setDialog("load")}><FontAwesomeIcon icon={faPlay}/> Replace mods</Button>}
                 {!readOnly && <Button size="sm" type="danger" onClick={() => setDialog("delete")}><FontAwesomeIcon icon={faTrashAlt}/> Delete</Button>}
             </div>
         </div>
@@ -55,7 +55,7 @@ const ModPack = ({modPack, reloadModPacks, factorioVersion, reloadMods, profileL
             title={dialog === "delete" ? "Delete mod pack?" : "Replace profile mods?"}
             content={dialog === "delete"
                 ? `${modPack.name} will be removed. Installed mods are not changed.`
-                : `Loading ${modPack.name} replaces the active profile's entire mod set and stored mod settings.`}
+                : `Loading ${modPack.name} replaces the selected server's entire mod set and stored mod settings.`}
             isOpen={dialog === "delete" || dialog === "load"}
             close={() => setDialog(null)}
             onSuccess={dialog === "delete" ? deleteModPack : loadModPack}

@@ -13,7 +13,10 @@ const profiles = {
     ]
 };
 const api = {
-    "/api/servers": [{id: "1", name: "Existing server", bindip: "0.0.0.0", port: 34197, rcon_port: 40000, running: false, stopping: false}],
+    "/api/servers": [
+        {id: "1", name: "Existing server", profile_id: "demo-main", savefile: "demo.zip", base_mod_version: "2.0.77", bindip: "0.0.0.0", port: 34197, rcon_port: 40000, running: false, stopping: false},
+        {id: "2", name: "Second server", savefile: "second.zip", base_mod_version: "2.0.77", bindip: "0.0.0.0", port: 34198, rcon_port: 40001, running: false, stopping: false}
+    ],
     "/api/profiles": profiles,
     "/api/user/list": [{username: "demo-admin", role: "admin"}, {username: "demo-viewer", role: "viewer"}],
     "/api/saves/list": [{name: "demo.zip", size: 1234567, last_mod: "2026-01-01T12:00:00Z"}],
@@ -47,9 +50,21 @@ http.createServer((req, res) => {
         if (url.pathname === "/api/user/status") return scenario === "anonymous"
             ? json("Authentication required", 401)
             : json({username: scenario === "viewer" ? "demo-viewer" : "demo-admin", role: scenario === "viewer" ? "viewer" : "admin"});
-        if (url.pathname === "/api/server/status") return scenario === "unknown"
+        const scoped = url.pathname.match(/^\/api\/servers\/([^/]+)(.*)$/);
+        const serverID = scoped?.[1] || req.headers["x-fsm-server-id"] || url.searchParams.get("server") || "1";
+        const selected = api["/api/servers"].find(server => server.id === serverID);
+        if (scoped && !selected) return json("Server not found", 404);
+        if (url.pathname === "/api/server/status" || scoped?.[2] === "/status") return scenario === "unknown"
             ? json("Status unavailable", 503)
-            : json({id: "1", running: scenario === "running", stopping: false, savefile: "demo.zip", fac_version: "2.0.77"});
+            : json({...selected, id: serverID, running: serverID === "1" && scenario === "running", stopping: false, fac_version: "2.0.77"});
+        if (scoped?.[2] === "") return json(selected);
+        if (scoped?.[2] === "/settings") return json({...api["/api/settings"], name: serverID === "2" ? "Second world" : "Demo server"});
+        if (scoped?.[2] === "/saves/list") return json([{name: serverID === "2" ? "second.zip" : "demo.zip", size: 1234567, last_mod: "2026-01-01T12:00:00Z"}]);
+        if (scoped?.[2] === "/mods/list") return json([]);
+        if (scoped?.[2] === "/log/tail") return json([serverID === "2" ? "Second server output" : "Synthetic test log - no real game output"]);
+        if (url.pathname === "/api/saves/list" && serverID === "2") return json([{name: "second.zip", size: 7654321, last_mod: "2026-01-02T12:00:00Z"}]);
+        if (url.pathname === "/api/settings" && serverID === "2") return json({...api["/api/settings"], name: "Second world"});
+        if (url.pathname === "/api/servers") return json(api[url.pathname].map(server => ({...server, running: server.id === "1" && scenario === "running"})));
         if (url.pathname === "/api/server/players") return json({profile_id: "demo-main", server_running: scenario === "running", live_available: true, online_count: 0, online_players: [], players: []});
         if (Object.hasOwn(api, url.pathname)) return json(api[url.pathname]);
         return json(`Missing test fixture: ${req.method} ${url.pathname}`, 501);

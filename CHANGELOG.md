@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Make the selected server the primary workspace context across navigation, process controls, settings, saves, mods, logs and console. Switching servers does not activate a profile or stop a running game; URL-scoped selection and request targeting keep operations on the intended instance.
+- Present profiles as reusable setup presets: configure a source server, capture its mods and supported settings, and apply them to another stopped server without replacing its world or credentials. Retain Server 1's older world-snapshot and backup tools in an advanced section.
+- Move the mimalloc preference into the server's startup settings instead of a separate server-card option, and use explicit server-scoped HTTP status, log and console requests rather than the unsupported per-server WebSocket subscriptions.
+
 ### Fixed
 - Hydrate additional runtimes from their own persistent settings/admin files and the actual shared-engine metadata, create private defaults instead of inheriting Server 1's identity, and preserve their selected save across recreation. Validate catalog IDs, retain orphaned data without reassigning it, and roll back failed runtime creation/deletion.
 - Pass dedicated mod/config paths to child processes, write native-compatible compact INI path keys, and publish connected state with the installed RCON console. Keep secondary lifecycle actions, logs and status out of the default server's checkpoint/feed paths; require all games stopped before shared-engine replacement. Concurrent Windows launch fails closed pending isolated console control.

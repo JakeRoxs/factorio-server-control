@@ -19,7 +19,7 @@ const validateState = result => {
     return result;
 };
 
-export const ProfileProvider = ({children}) => {
+export const ProfileProvider = ({children, server}) => {
     const [state, setState] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState("");
@@ -72,8 +72,17 @@ export const ProfileProvider = ({children}) => {
     }, [refreshProfiles]);
 
     const activeProfile = useMemo(
-        () => state?.profiles?.find(profile => profile.id === state.active_profile_id) || null,
-        [state]
+        () => server ? {
+            ...(server.id === "1" ? state?.profiles?.find(profile => profile.id === state.active_profile_id) : {}),
+            id: server.id === "1" ? state?.active_profile_id || server.profile_id || "server-1" : `server-${server.id}`,
+            name: server.name,
+            selected_save: server.savefile,
+            bind_ip: server.bindip,
+            port: server.port,
+            installed_version: server.base_mod_version || server.fac_version,
+            release_target: server.version
+        } : state?.profiles?.find(profile => profile.id === state.active_profile_id) || null,
+        [state, server]
     );
 
     const value = useMemo(() => ({
