@@ -173,7 +173,6 @@ const Controls = ({serverStatus, canManage = false}) => {
     const activeSave = sortedSaves.find(save => save.name === selectedName)
         || (selectedName?.startsWith("Load Latest") ? sortedSaves[0] : null)
         || sortedSaves.find(save => save.name === activeProfile?.selected_save)
-        || sortedSaves[0]
         || null;
     const checkpoints = checkpointState?.checkpoints || [];
     const latestCheckpoint = [...checkpoints].sort((left, right) => new Date(right.created_at) - new Date(left.created_at))[0] || null;
