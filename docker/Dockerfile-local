@@ -1,5 +1,5 @@
 # Glibc is required for Factorio Server binaries to run
-FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+FROM ubuntu@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 
 ENV FACTORIO_VERSION="" \
     FSM_REQUIRE_PERSISTENT_MOUNTS=true \
@@ -18,7 +18,11 @@ WORKDIR /opt
 COPY build/factorio-server-manager-linux.zip /factorio-server-manager-linux.zip
 RUN unzip /factorio-server-manager-linux.zip \
     && rm /factorio-server-manager-linux.zip \
-    && mv factorio-server-manager fsm
+    && mv factorio-server-manager fsm \
+    && usermod -l factorio -d /opt/factorio -m ubuntu \
+    && usermod --shell /usr/sbin/nologin factorio \
+    && mkdir -p /opt/fsm-data /opt/factorio/saves /opt/factorio/mods /opt/factorio/config \
+    && chown -R 1000:1000 /opt/fsm /opt/fsm-data /opt/factorio
 
 COPY docker/entrypoint.sh /opt/entrypoint.sh
 RUN sed -i 's/\r$//' /opt/entrypoint.sh \
@@ -28,4 +32,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=5 \
     CMD curl --fail --silent --show-error http://127.0.0.1/ >/dev/null || exit 1
 
 STOPSIGNAL SIGTERM
+USER factorio
 ENTRYPOINT ["/opt/entrypoint.sh"]
