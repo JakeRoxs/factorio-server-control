@@ -26,7 +26,7 @@ async function settings(t, {id = "2", running = false} = {}) {
             get: async target => { reads.push(["startup", target]); return server; },
             update: async (target, data) => {calls.push(["server", target, data]); server = {...server, ...data, savefile: data.selected_save || server.savefile}; return server;}
         },
-        "../../api/resources/profiles": {updateStartup: async (...args) => {calls.push(["legacy", ...args]); server = {...server, bindip: args[1], port: args[2], savefile: args[3]}; return {}; }},
+        "../../api/resources/profiles": {updateStartup: async (...args) => {calls.push(["legacy", ...args]); server = {...server, bindip: args[1].bind_ip, port: args[1].port, savefile: args[1].selected_save}; return {}; }},
         "../../api/resources/server": {autostart: async () => ({enabled: false}), mapSnapshot: async () => {reads.push(["maps"]); return {settings: {}};}},
         "../components/PageHeader": () => null, "../components/Panel": props => props.content,
         "../components/Input": () => null, "../components/InputPassword": () => null,
@@ -66,7 +66,7 @@ test("a running server saves only the next-start allocator preference without re
 test("Server 1 startup retains legacy world persistence without exposing profile switching", async t => {
     const view = await settings(t, {id: "1"});
     await act(async () => view.root.root.findByProps({id: "startup-settings-form"}).props.onSubmit({bind_ip: "0.0.0.0", port: 34200, savefile: "new.zip", use_mimalloc: false}));
-    assert.deepEqual(view.calls, [["legacy", "legacy-world", "0.0.0.0", 34200, "new.zip"]]);
+    assert.deepEqual(view.calls, [["legacy", "legacy-world", {bind_ip: "0.0.0.0", port: 34200, selected_save: "new.zip"}]]);
 });
 
 test("save selection and native downloads refer to the selected server, not the legacy profile", async t => {

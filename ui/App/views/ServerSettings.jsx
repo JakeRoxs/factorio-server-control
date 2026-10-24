@@ -167,7 +167,7 @@ const ServerSettings = ({serverStatus, canManage = false}) => {
                 await serversResource.update(serverID, {use_mimalloc: allocator});
             } else if (primaryServer) {
                 if (values.bind_ip !== startupSettings.bind_ip || Number(values.port) !== startupSettings.port || values.savefile !== startupSettings.savefile) {
-                    applyProfileState(await profilesResource.updateStartup(activeProfile.id, values.bind_ip, Number(values.port), values.savefile || ""));
+                    applyProfileState(await profilesResource.updateStartup(activeProfile.id, {bind_ip: values.bind_ip, port: Number(values.port), selected_save: values.savefile || ""}));
                     networkSaved = true;
                 }
                 if (allocator !== startupSettings.use_mimalloc) await serversResource.update(serverID, {use_mimalloc: allocator});
