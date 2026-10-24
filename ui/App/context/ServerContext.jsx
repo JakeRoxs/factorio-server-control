@@ -37,7 +37,7 @@ export const ServerProvider = ({children}) => {
     const refreshServerStatus = useCallback(async () => {
         const generation = ++statusGeneration.current;
         try {
-            const response = await client.get(`/api/servers/${encodeURIComponent(serverID)}/status`);
+            const response = await client.get("/api/server/status");
             const result = response.data;
             if (typeof result?.running !== "boolean" || typeof result?.stopping !== "boolean") throw new Error("Invalid server status");
             if (currentID.current === serverID && generation === statusGeneration.current) setStatus({...result, id: serverID, known: true});

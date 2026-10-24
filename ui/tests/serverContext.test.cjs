@@ -20,7 +20,7 @@ test("switching servers changes navigation, not profiles, and discards late stat
     t.after(() => act(() => root.unmount()));
     assert.equal(state.selectedServer.name, "Second");
     assert.equal(state.serverStatus.known, false);
-    assert.equal(requests[0].url, "/api/servers/2/status");
+    assert.equal(requests[0].url, "/api/server/status");
     act(() => state.selectServer("1"));
     assert.deepEqual(navigations, [{pathname: "/mods", search: "server=1"}]);
     location = {pathname: "/mods", search: "?server=1"};
