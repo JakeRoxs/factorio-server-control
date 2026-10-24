@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState} from "react";
 import {useForm} from "react-hook-form";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faDownload, faFloppyDisk, faHardDrive, faRotate, faTrashAlt} from "@fortawesome/free-solid-svg-icons";
@@ -36,7 +36,7 @@ const formatSize = bytes => {
     return megabytes >= 100 ? `${megabytes.toFixed(0)} MB` : `${megabytes.toFixed(2)} MB`;
 };
 
-const Checkpoints = ({serverStatus, onRestore, canManage = false}) => {
+const Checkpoints = ({serverID, serverStatus, onRestore, canManage = false}) => {
     const [state, setState] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
@@ -45,6 +45,8 @@ const Checkpoints = ({serverStatus, onRestore, canManage = false}) => {
     const [restoringID, setRestoringID] = useState("");
     const [checkpointToDelete, setCheckpointToDelete] = useState(null);
     const {register, handleSubmit, reset, formState: {errors}} = useForm({defaultValues: defaultSettings});
+    const currentServerRef = useRef(serverID);
+    currentServerRef.current = serverID;
 
     const applyState = useCallback((result, syncSettings = false) => {
         setState(result);
@@ -52,28 +54,44 @@ const Checkpoints = ({serverStatus, onRestore, canManage = false}) => {
     }, [reset]);
 
     const load = useCallback(async () => {
+        const requestedServer = serverID;
         setIsLoading(true);
         setLoadError("");
         try {
-            applyState(await savesResource.checkpoints.list(), true);
+            const result = await savesResource.checkpoints.list(requestedServer);
+            if (requestedServer === currentServerRef.current) {
+                applyState(result, true);
+            }
         } catch (error) {
-            setLoadError("Checkpoint data and schedule settings could not be loaded.");
+            if (requestedServer === currentServerRef.current) {
+                setLoadError("Checkpoint data and schedule settings could not be loaded.");
+            }
         } finally {
-            setIsLoading(false);
+            if (requestedServer === currentServerRef.current) {
+                setIsLoading(false);
+            }
         }
-    }, [applyState]);
+    }, [applyState, serverID]);
 
     useEffect(() => { load(); }, [load]);
 
     useEffect(() => {
         if (!state) return undefined;
+        const requestedServer = serverID;
         const timer = window.setInterval(() => {
-            savesResource.checkpoints.list().then(setState).catch(() => undefined);
+            savesResource.checkpoints.list(requestedServer)
+                .then(result => {
+                    if (requestedServer === currentServerRef.current) {
+                        setState(result);
+                    }
+                })
+                .catch(() => undefined);
         }, 30000);
         return () => window.clearInterval(timer);
-    }, [Boolean(state)]);
+    }, [Boolean(state), serverID]);
 
     const saveSettings = async values => {
+        const requestedServer = serverID;
         setIsSavingSettings(true);
         try {
             const settings = {
@@ -81,43 +99,69 @@ const Checkpoints = ({serverStatus, onRestore, canManage = false}) => {
                 interval_minutes: Number(values.interval_minutes),
                 retention_count: Number(values.retention_count)
             };
-            applyState(await savesResource.checkpoints.settings(settings), true);
-            window.flash("Checkpoint schedule saved.", "green");
+            const result = await savesResource.checkpoints.settings(requestedServer, settings);
+            if (requestedServer === currentServerRef.current) {
+                applyState(result, true);
+                window.flash("Checkpoint schedule saved.", "green");
+            }
         } catch (error) {
-            window.flash(error?.response?.data || "Checkpoint settings could not be saved.", "red");
+            if (requestedServer === currentServerRef.current) {
+                window.flash(error?.response?.data || "Checkpoint settings could not be saved.", "red");
+            }
         } finally {
-            setIsSavingSettings(false);
+            if (requestedServer === currentServerRef.current) {
+                setIsSavingSettings(false);
+            }
         }
     };
 
     const create = async () => {
+        const requestedServer = serverID;
         setIsCreating(true);
         try {
-            applyState(await savesResource.checkpoints.create());
-            window.flash("Fixed checkpoint created and verified.", "green");
+            const result = await savesResource.checkpoints.create(requestedServer);
+            if (requestedServer === currentServerRef.current) {
+                applyState(result);
+                window.flash("Fixed checkpoint created and verified.", "green");
+            }
         } catch (error) {
-            window.flash(error?.response?.data || "Checkpoint could not be created.", "red");
+            if (requestedServer === currentServerRef.current) {
+                window.flash(error?.response?.data || "Checkpoint could not be created.", "red");
+            }
         } finally {
-            setIsCreating(false);
+            if (requestedServer === currentServerRef.current) {
+                setIsCreating(false);
+            }
         }
     };
 
     const restore = async checkpoint => {
+        const requestedServer = serverID;
         setRestoringID(checkpoint.id);
         try {
-            const save = await savesResource.checkpoints.restore(checkpoint);
-            await Promise.resolve(onRestore?.());
-            window.flash(`${save?.name || "Checkpoint"} restored as a new save.`, "green");
+            const save = await savesResource.checkpoints.restore(requestedServer, checkpoint);
+            if (requestedServer === currentServerRef.current) {
+                await Promise.resolve(onRestore?.());
+                window.flash(`${save?.name || "Checkpoint"} restored as a new save.`, "green");
+            }
         } catch (error) {
-            window.flash(error?.response?.data || "Checkpoint could not be restored.", "red");
+            if (requestedServer === currentServerRef.current) {
+                window.flash(error?.response?.data || "Checkpoint could not be restored.", "red");
+            }
         } finally {
-            setRestoringID("");
+            if (requestedServer === currentServerRef.current) {
+                setRestoringID("");
+            }
         }
     };
 
     const remove = async checkpoint => {
-        applyState(await savesResource.checkpoints.delete(checkpoint));
-        window.flash("Checkpoint deleted.", "green");
+        const requestedServer = serverID;
+        const result = await savesResource.checkpoints.delete(requestedServer, checkpoint);
+        if (requestedServer === currentServerRef.current) {
+            applyState(result);
+            window.flash("Checkpoint deleted.", "green");
+        }
     };
 
     const checkpoints = state?.checkpoints || [];
@@ -199,7 +243,7 @@ const Checkpoints = ({serverStatus, onRestore, canManage = false}) => {
                                     <td className="max-w-xs truncate" title={checkpoint.source_save}>{checkpoint.source_save || "—"}</td>
                                     <td>{formatSize(checkpoint.size)}</td>
                                     <td><div className="flex justify-end gap-2">
-                                        <a className="ui-icon-button" href={`/api/checkpoints/${encodeURIComponent(checkpoint.id)}/download`} aria-label="Download checkpoint" title="Download checkpoint">
+                                        <a className="ui-icon-button" href={`/api/servers/${encodeURIComponent(serverID)}/checkpoints/${encodeURIComponent(checkpoint.id)}/download`} aria-label="Download checkpoint" title="Download checkpoint">
                                             <FontAwesomeIcon icon={faDownload}/>
                                         </a>
                                         {canManage && <IconButton

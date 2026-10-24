@@ -42,6 +42,9 @@ func main() {
 		log.Printf("Error initializing Factorio profiles: %v\n", err)
 		return
 	}
+	if err := factorio.MigrateLegacyProfileCheckpoints(); err != nil {
+		log.Printf("Warning: error migrating legacy checkpoint stores: %v\n", err)
+	}
 	if _, err := factorio.InitServerManager(); err != nil {
 		log.Printf("Error initializing server manager: %v\n", err)
 		return

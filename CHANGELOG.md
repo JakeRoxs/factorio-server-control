@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Per-server fixed checkpoints: each server owns its own checkpoint archives, settings, retention, and error state. Legacy profile-bound checkpoints are automatically migrated to the default server on first startup.
+
 ### Changed
 - Make the selected server the primary workspace context across navigation, process controls, settings, saves, mods, logs and console. Switching servers does not activate a profile or stop a running game; URL-scoped selection and request targeting keep operations on the intended instance.
 - Present profiles as reusable setup presets: configure a source server, capture its mods and supported settings, and apply them to another stopped server without replacing its world or credentials. Retain Server 1's older world-snapshot and backup tools in an advanced section.

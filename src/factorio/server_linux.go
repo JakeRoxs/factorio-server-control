@@ -20,8 +20,8 @@ func (server *Server) Stop() error {
 		return nil
 	}
 	if server.ID == "" || server.ID == DefaultServerID {
-		stopCheckpointMonitor()
-		runCleanStopCheckpoint()
+		stopCheckpointMonitor(server.ID)
+		runCleanStopCheckpoint(server)
 	}
 	return server.signalStop()
 }

@@ -139,7 +139,7 @@ func (server *Server) SetRunning(newState bool) {
 	}
 	stateMutex.Unlock()
 	if stopped {
-		stopCheckpointMonitor()
+		stopCheckpointMonitor(server.ID)
 		stopRconWatchdog()
 	}
 	server.broadcastStatus()
@@ -217,9 +217,7 @@ func (server *Server) Kill() error {
 	if command == nil || command.Process == nil {
 		return errors.New("Factorio process is not available")
 	}
-	if server.ID == "" || server.ID == DefaultServerID {
-		stopCheckpointMonitor()
-	}
+	stopCheckpointMonitor(server.ID)
 	server.SetStopping(true)
 	if err := command.Process.Kill(); err != nil {
 		server.SetStopping(false)

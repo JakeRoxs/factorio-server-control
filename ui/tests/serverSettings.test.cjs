@@ -78,7 +78,7 @@ test("save selection and native downloads refer to the selected server, not the 
         "../../components/IconButton": () => null, "../../components/Button": Button,
         "../../components/Alert": props => props.children, "../../components/ConfirmDialog": () => null,
         "../../components/ScopeBadge": () => null, "../../components/EmptyState": () => null,
-        "./components/Checkpoints": () => {throw new Error("Secondary server must not fetch default checkpoints");},
+        "./components/Checkpoints": () => null,
         "./components/NewWorldForm": () => null, "./components/UploadSaveForm": () => null
     }, {window: {flash() {}}}).default;
     let root;

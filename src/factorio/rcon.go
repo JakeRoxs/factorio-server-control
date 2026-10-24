@@ -32,9 +32,6 @@ func (server *Server) rconConnectionSettings() (string, string) {
 
 func (server *Server) connectRC() error {
 	rconAddr, password := server.rconConnectionSettings()
-	stateMutex.RLock()
-	id := server.ID
-	stateMutex.RUnlock()
 	console, err := rcon.Dial(rconAddr, password)
 	if err != nil {
 		log.Printf("Cannot create rcon session: %s", err)
@@ -48,15 +45,11 @@ func (server *Server) connectRC() error {
 	log.Printf("rcon session established on %s", rconAddr)
 	if pendingStop {
 		log.Printf("Factorio startup completed with a shutdown request pending")
-		if id == "" || id == DefaultServerID {
-			runCleanStopCheckpoint()
-		}
+		runCleanStopCheckpoint(server)
 		return server.signalStop()
 	}
-	if id == "" || id == DefaultServerID {
-		startCheckpointMonitor(server)
-		startRconWatchdog()
-	}
+	startCheckpointMonitor(server)
+	startRconWatchdog()
 
 	return nil
 }

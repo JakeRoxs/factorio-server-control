@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState} from "react";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faDownload, faHardDrive, faPlus, faRotate, faTrashAlt} from "@fortawesome/free-solid-svg-icons";
 import savesResource from "../../../api/resources/saves";
@@ -30,21 +30,30 @@ const Saves = ({serverStatus, canManage = false}) => {
     const [loadError, setLoadError] = useState("");
     const [saveToDelete, setSaveToDelete] = useState(null);
     const mutationsLocked = Boolean(!canManage || serverStatus?.known === false || serverStatus?.running || serverStatus?.stopping);
+    const currentServerRef = useRef(serverID);
+    currentServerRef.current = serverID;
 
     const updateList = useCallback(async () => {
+        const requestedServer = serverID;
         setIsLoading(true);
         setLoadError("");
         try {
-            const result = serverID
-                ? await savesResource.listForServer(serverID)
+            const result = requestedServer
+                ? await savesResource.listForServer(requestedServer)
                 : await savesResource.list();
-            setSaves(result || []);
+            if (requestedServer === currentServerRef.current) {
+                setSaves(result || []);
+            }
         } catch (error) {
-            const message = typeof error?.response?.data === "string" ? error.response.data : "Saves could not be loaded.";
-            setLoadError(message);
-            window.flash(message, "red");
+            if (requestedServer === currentServerRef.current) {
+                const message = typeof error?.response?.data === "string" ? error.response.data : "Saves could not be loaded.";
+                setLoadError(message);
+                window.flash(message, "red");
+            }
         } finally {
-            setIsLoading(false);
+            if (requestedServer === currentServerRef.current) {
+                setIsLoading(false);
+            }
         }
     }, [serverID]);
 
@@ -104,7 +113,7 @@ const Saves = ({serverStatus, canManage = false}) => {
                 : "Stop Factorio before uploading, creating or deleting saves."} Downloads remain available.
         </Alert>}
 
-        {!primaryServer && <Alert type="info" className="mb-5">Uploads, downloads and deletion target this server. Fixed checkpoints and world-generation previews/options are currently available for Server 1 only.</Alert>}
+        {!primaryServer && <Alert type="info" className="mb-5">Uploads, downloads and deletion target this server. Fixed checkpoints, world-generation previews and options are available for every server; checkpoint snapshot and RCON targets are scoped to the selected server.</Alert>}
 
         {isLoading && <Panel className="mb-5" content={<div className="ui-empty-state"><div><FontAwesomeIcon className="text-orange" icon={faHardDrive} spin/><p className="mt-3">Loading server saves...</p></div></div>}/>}
 
@@ -139,7 +148,7 @@ const Saves = ({serverStatus, canManage = false}) => {
                 content={saveTable}
             />
 
-            {primaryServer && <Checkpoints serverStatus={serverStatus} onRestore={updateList} canManage={canManage}/>}
+            <Checkpoints serverID={serverID} serverStatus={serverStatus} onRestore={updateList} canManage={canManage}/>
             {primaryServer && showNewWorld && canManage && <Panel className="mb-5" title="Create world" content={mutationsLocked ? <Alert type="warning">Stop this server before creating a world.</Alert> : <NewWorldForm onSuccess={async () => { await updateList(); setShowNewWorld(false); }}/>}/>}
 
             {canManage && <Panel

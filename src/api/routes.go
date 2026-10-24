@@ -401,6 +401,42 @@ var apiRoutes = Routes{
 		DeleteCheckpoint,
 		false,
 	}, {
+		"ListCheckpointsForServer",
+		"GET",
+		"/servers/{serverID}/checkpoints",
+		ListCheckpointsForServer,
+		false,
+	}, {
+		"SaveCheckpointSettingsForServer",
+		"PUT",
+		"/servers/{serverID}/checkpoints/settings",
+		SaveCheckpointSettingsForServer,
+		false,
+	}, {
+		"CreateCheckpointForServer",
+		"POST",
+		"/servers/{serverID}/checkpoints",
+		CreateCheckpointForServer,
+		false,
+	}, {
+		"DownloadCheckpointForServer",
+		"GET",
+		"/servers/{serverID}/checkpoints/{checkpoint}/download",
+		DownloadCheckpointForServer,
+		false,
+	}, {
+		"RestoreCheckpointForServer",
+		"POST",
+		"/servers/{serverID}/checkpoints/{checkpoint}/restore",
+		RestoreCheckpointForServer,
+		true,
+	}, {
+		"DeleteCheckpointForServer",
+		"DELETE",
+		"/servers/{serverID}/checkpoints/{checkpoint}",
+		DeleteCheckpointForServer,
+		false,
+	}, {
 		"LogTail",
 		"GET",
 		"/log/tail",

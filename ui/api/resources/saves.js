@@ -73,24 +73,24 @@ export default {
         return response.data;
     },
     checkpoints: {
-        list: async () => {
-            const response = await client.get('/api/checkpoints');
+        list: async (serverID) => {
+            const response = await client.get(`/api/servers/${encodeURIComponent(serverID)}/checkpoints`);
             return response.data;
         },
-        settings: async settings => {
-            const response = await client.put('/api/checkpoints/settings', settings);
+        settings: async (serverID, settings) => {
+            const response = await client.put(`/api/servers/${encodeURIComponent(serverID)}/checkpoints/settings`, settings);
             return response.data;
         },
-        create: async () => {
-            const response = await client.post('/api/checkpoints');
+        create: async (serverID) => {
+            const response = await client.post(`/api/servers/${encodeURIComponent(serverID)}/checkpoints`);
             return response.data;
         },
-        restore: async checkpoint => {
-            const response = await client.post(`/api/checkpoints/${encodeURIComponent(checkpoint.id)}/restore`);
+        restore: async (serverID, checkpoint) => {
+            const response = await client.post(`/api/servers/${encodeURIComponent(serverID)}/checkpoints/${encodeURIComponent(checkpoint.id)}/restore`);
             return response.data;
         },
-        delete: async checkpoint => {
-            const response = await client.delete(`/api/checkpoints/${encodeURIComponent(checkpoint.id)}`);
+        delete: async (serverID, checkpoint) => {
+            const response = await client.delete(`/api/servers/${encodeURIComponent(serverID)}/checkpoints/${encodeURIComponent(checkpoint.id)}`);
             return response.data;
         }
     }
