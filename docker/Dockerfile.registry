@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # glibc is required by the official Factorio headless server.
 # Runs as non-root user "factorio" (uid 1000) for security.
-FROM ubuntu@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc AS runtime
+FROM ubuntu@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944 AS runtime
 
 ARG VERSION
 ARG VCS_REF
