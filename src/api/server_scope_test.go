@@ -119,3 +119,145 @@ func TestScopedLogPathMatchesTheRuntimeWriter(t *testing.T) {
 	secondary := factorio.Server{ID: "2", ConfigDir: filepath.Join(t.TempDir(), "config")}
 	require.Equal(t, filepath.Join(filepath.Dir(secondary.ConfigDir), "console.log"), secondary.ConsoleLogPath())
 }
+
+func TestManagerBypassRouteKeepsDiscoveryUsable(t *testing.T) {
+	bypass := []struct {
+		path   string
+		method string
+	}{
+		{"/api/servers", http.MethodGet},
+		{"/api/servers", http.MethodPost},
+		{"/api/servers/next", http.MethodGet},
+		{"/api/user/prefs", http.MethodGet},
+		{"/api/user/list", http.MethodPost},
+		{"/api/logout", http.MethodPost},
+		{"/api/profiles", http.MethodGet},
+		{"/api/server/autostart", http.MethodGet},
+		{"/api/mods/portal/preferences", http.MethodGet},
+		{"/api/backups/limits", http.MethodGet},
+		{"/api/mods/packs/list", http.MethodGet},
+	}
+	for _, c := range bypass {
+		require.True(t, managerBypassRoute(c.path, c.method), "path %s method %s must bypass", c.path, c.method)
+	}
+	// Non-bypass or method-mismatched routes must not bypass.
+	require.False(t, managerBypassRoute("/api/profiles", http.MethodPost))
+	require.False(t, managerBypassRoute("/api/servers/1/settings", http.MethodGet))
+	require.False(t, managerBypassRoute("/api/server/start", http.MethodPost))
+	require.False(t, managerBypassRoute("/api/saves/upload", http.MethodPost))
+}
+
+func TestResolveServerIDPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name, routeID, headerID, queryID, want string
+	}{
+		{"route beats header and query", "2", "3", "4", "2"},
+		{"header beats query", "", "3", "4", "3"},
+		{"query fallback", "", "", "4", "4"},
+		{"no selection", "", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/server/status?server="+tc.queryID, nil)
+			request.Header.Set("X-FSM-Server-ID", tc.headerID)
+			request = mux.SetURLVars(request, map[string]string{"serverID": tc.routeID})
+			require.Equal(t, tc.want, resolveServerID(request))
+		})
+	}
+}
+
+func TestSelectedServerMiddlewareBypassesExemptRoutes(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	middleware := SelectedServerMiddleware(handler)
+
+	exempt := []string{
+		"/api/servers",
+		"/api/servers/next",
+		"/api/user/prefs",
+		"/api/logout",
+		"/api/profiles",
+		"/api/server/autostart",
+		"/api/mods/portal/preferences",
+		"/api/backups/limits",
+		"/api/mods/packs/list",
+	}
+	for _, path := range exempt {
+		request := httptest.NewRequest(http.MethodGet, path+"/", nil)
+		// Without the exemption, this selection would fail validation. This
+		// also verifies that a trailing slash is normalized before lookup.
+		request.Header.Set("X-FSM-Server-ID", "../deleted")
+		response := httptest.NewRecorder()
+		middleware.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, "exempt route %s must bypass", path)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/profiles", nil)
+	request.Header.Set("X-FSM-Server-ID", "../deleted")
+	response := httptest.NewRecorder()
+	middleware.ServeHTTP(response, request)
+	require.Equal(t, http.StatusBadRequest, response.Code, "profile mutations must not use the GET discovery exemption")
+}
+
+func TestSelectedServerMiddlewareBypassesUnnamedFallback(t *testing.T) {
+	router := mux.NewRouter()
+	router.Handle("/api/server/status", SelectedServerMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})))
+	request := httptest.NewRequest(http.MethodPost, "/api/server/status", nil)
+	request.Header.Set("X-FSM-Server-ID", "../deleted")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusMethodNotAllowed, response.Code, "unnamed method fallbacks must bypass server selection")
+}
+
+func TestSelectedServerMiddlewareSelectionAndErrorPaths(t *testing.T) {
+	manager, err := factorio.InitServerManager()
+	require.NoError(t, err)
+	server, err := manager.CreateServer("Scope test", "stable", "0.0.0.0", 0, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.DeleteServer(server.ID)) })
+
+	selected := ""
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		selected = vars["selectedServerID"]
+		w.WriteHeader(http.StatusOK)
+	})
+	middleware := SelectedServerMiddleware(handler)
+
+	// Valid selection via route vars reaches the handler.
+	request := httptest.NewRequest(http.MethodGet, "/api/servers/1/settings", nil)
+	request = mux.SetURLVars(request, map[string]string{"serverID": server.ID})
+	response := httptest.NewRecorder()
+	middleware.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, server.ID, selected)
+
+	// Invalid server selection returns 400.
+	request = httptest.NewRequest(http.MethodGet, "/api/servers/1/settings", nil)
+	request = mux.SetURLVars(request, map[string]string{"serverID": "../1"})
+	response = httptest.NewRecorder()
+	middleware.ServeHTTP(response, request)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+
+	// Unknown server returns 404.
+	request = httptest.NewRequest(http.MethodGet, "/api/servers/1/settings", nil)
+	request = mux.SetURLVars(request, map[string]string{"serverID": "missing"})
+	response = httptest.NewRecorder()
+	middleware.ServeHTTP(response, request)
+	require.Equal(t, http.StatusNotFound, response.Code)
+
+	// Secondary server on an unsupported route returns 409.
+	request = httptest.NewRequest(http.MethodPost, "/api/server/game-mode", nil)
+	request = mux.SetURLVars(request, map[string]string{"serverID": server.ID})
+	response = httptest.NewRecorder()
+	middleware.ServeHTTP(response, request)
+	require.Equal(t, http.StatusConflict, response.Code)
+
+	// No selection bypasses to the next handler without error.
+	request = httptest.NewRequest(http.MethodGet, "/api/servers/1/settings", nil)
+	response = httptest.NewRecorder()
+	middleware.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "", selected)
+}

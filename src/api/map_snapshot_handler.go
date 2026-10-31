@@ -14,6 +14,11 @@ import (
 
 const maxMapSnapshotSettingsRequestSize = 4 * 1024
 
+const (
+	headerCacheControl  = "Cache-Control"
+	cacheControlNoStore = "no-store"
+)
+
 var getMapSnapshotState = factorio.GetMapSnapshotState
 var triggerMapSnapshot = factorio.TriggerMapSnapshot
 var loadMapSnapshotSettings = factorio.LoadMapSnapshotSettings
@@ -102,8 +107,8 @@ func UpdateMapSnapshotSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Unable to save map snapshot settings: %s", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	WriteResponse(w, settings)
 }
 
@@ -118,8 +123,8 @@ func GetMapSnapshotImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Unable to load map snapshot image: %s", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, "image/png")
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	http.ServeContent(w, r, "surface-"+surfaceID+".png", generatedAt, bytes.NewReader(contents))
 }
 
@@ -134,14 +139,14 @@ func GetMapSnapshotEntities(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Unable to load map snapshot entity details: %s", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, "application/x-ndjson")
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	http.ServeContent(w, r, "surface-"+surfaceID+"-entities.jsonl", generatedAt, bytes.NewReader(contents))
 }
 
 func writeMapSnapshotState(w http.ResponseWriter, state factorio.MapSnapshotState, status int) {
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	w.WriteHeader(status)
 	WriteResponse(w, state)
 }

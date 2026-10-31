@@ -20,6 +20,12 @@ type Route struct {
 
 type Routes []Route
 
+const (
+	profilesRoutePath = "/profiles"
+	serversRoutePath  = "/servers"
+	serverRoutePath   = "/servers/{serverID}"
+)
+
 func ServerOffMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// only run if server is turned off
@@ -175,46 +181,26 @@ func NewRouter() *mux.Router {
 		Name("Login").
 		Handler(frontendFileHandler("/login"))
 
-	subRouter.Path("/saves").
-		Methods("GET").
-		Name("Saves").
-		Handler(frontendFileHandler("/saves"))
-	subRouter.Path("/mods").
-		Methods("GET").
-		Name("Mods").
-		Handler(frontendFileHandler("/mods"))
-	subRouter.Path("/server-settings").
-		Methods("GET").
-		Name("Server settings").
-		Handler(frontendFileHandler("/server-settings"))
-	subRouter.Path("/game-settings").
-		Methods("GET").
-		Name("Game settings").
-		Handler(frontendFileHandler("/game-settings"))
-	subRouter.Path("/console").
-		Methods("GET").
-		Name("Console").
-		Handler(frontendFileHandler("/console"))
-	subRouter.Path("/logs").
-		Methods("GET").
-		Name("Logs").
-		Handler(frontendFileHandler("/logs"))
-	subRouter.Path("/releases").
-		Methods("GET").
-		Name("Releases").
-		Handler(frontendFileHandler("/releases"))
-	subRouter.Path("/profiles").
-		Methods("GET").
-		Name("Profiles").
-		Handler(frontendFileHandler("/profiles"))
-	subRouter.Path("/servers").
-		Methods("GET").
-		Name("Servers").
-		Handler(frontendFileHandler("/servers"))
-	subRouter.Path("/user-management").
-		Methods("GET").
-		Name("User management").
-		Handler(frontendFileHandler("/user-management"))
+	for _, page := range []struct {
+		path string
+		name string
+	}{
+		{"/saves", "Saves"},
+		{"/mods", "Mods"},
+		{"/server-settings", "Server settings"},
+		{"/game-settings", "Game settings"},
+		{"/console", "Console"},
+		{"/logs", "Logs"},
+		{"/releases", "Releases"},
+		{profilesRoutePath, "Profiles"},
+		{serversRoutePath, "Servers"},
+		{"/user-management", "User management"},
+	} {
+		subRouter.Path(page.path).
+			Methods("GET").
+			Name(page.name).
+			Handler(frontendFileHandler(page.path))
+	}
 	// catch all route
 	mainRouter.PathPrefix("/").
 		Methods("GET").
@@ -270,13 +256,13 @@ var apiRoutes = Routes{
 	{
 		"ListProfiles",
 		"GET",
-		"/profiles",
+		profilesRoutePath,
 		ListProfilesHandler,
 		false,
 	}, {
 		"CreateProfile",
 		"POST",
-		"/profiles",
+		profilesRoutePath,
 		CreateProfileHandler,
 		false,
 	}, {
@@ -553,7 +539,7 @@ var apiRoutes = Routes{
 	}, {
 		"ListServers",
 		"GET",
-		"/servers",
+		serversRoutePath,
 		ListServersHandler,
 		false,
 	}, {
@@ -565,25 +551,25 @@ var apiRoutes = Routes{
 	}, {
 		"CreateServer",
 		"POST",
-		"/servers",
+		serversRoutePath,
 		CreateServerHandler,
 		false,
 	}, {
 		"GetServer",
 		"GET",
-		"/servers/{serverID}",
+		serverRoutePath,
 		GetServerHandler,
 		false,
 	}, {
 		"UpdateServer",
 		"PUT",
-		"/servers/{serverID}",
+		serverRoutePath,
 		UpdateServerHandler,
 		false,
 	}, {
 		"DeleteServer",
 		"DELETE",
-		"/servers/{serverID}",
+		serverRoutePath,
 		DeleteServerHandler,
 		true,
 	}, {

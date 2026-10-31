@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -27,6 +28,7 @@ import (
 const readHttpBodyError = "Could not read the Request Body."
 const maximumJSONRequestBodyBytes int64 = 1 * 1024 * 1024
 const multipartRequestOverheadBytes int64 = 1 * 1024 * 1024
+const errLoginRequestInvalid = "Unable to parse login request"
 
 type JSONResponseFileInput struct {
 	Success   bool        `json:"success"`
@@ -105,7 +107,7 @@ func ListSaves(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	latestParam := r.URL.Query().Get("latest")
 
@@ -154,7 +156,7 @@ func ListServerSavesHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	server, ok := serverFromRequest(r)
 	if !ok {
@@ -230,14 +232,9 @@ func UploadSave(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maximumMultipartRequestSize(config.MaxUploadSize))
 	}
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			resp = uploadLimitMessage("Save file", config.MaxUploadSize)
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-		} else {
-			resp = fmt.Sprintf("Unable to parse save upload: %s", err)
-			w.WriteHeader(http.StatusBadRequest)
-		}
+		var status int
+		resp, status = writeMultipartParseError(config.MaxUploadSize, err)
+		w.WriteHeader(status)
 		log.Println(resp)
 		return
 	}
@@ -250,75 +247,20 @@ func UploadSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, saveFile := range files {
-		if config.MaxUploadSize > 0 && saveFile.Size > config.MaxUploadSize {
-			resp = uploadLimitMessage("Save file", config.MaxUploadSize)
-			log.Println(resp)
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-			return
-		}
-		if err := factorio.ValidatePathElement(saveFile.Filename); err != nil {
-			resp = fmt.Sprintf("Invalid save filename: %s", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		ext := filepath.Ext(saveFile.Filename)
-		if !strings.EqualFold(ext, ".zip") || strings.HasSuffix(strings.ToLower(saveFile.Filename), ".tmp.zip") {
-			// Only zip-files allowed
-			resp = fmt.Sprintf("Fileformat {%s} is not allowed", ext)
-			w.WriteHeader(http.StatusUnsupportedMediaType)
-			return
-		}
-
-		file, err := saveFile.Open()
-		if err != nil {
-			resp = fmt.Sprintf("Error opening uploaded saveFile: %s", err)
-			log.Println(resp)
-			w.WriteHeader(http.StatusInternalServerError)
+		file, tempPath, ok := stageUploadedSaveFile(w, requestSavesDirectory(r), config.MaxUploadSize, saveFile, &resp)
+		if !ok {
 			return
 		}
 		defer file.Close()
+		defer os.Remove(tempPath)
 
-		temporary, err := os.CreateTemp(requestSavesDirectory(r), ".save-upload-*.zip")
-		if err != nil {
-			resp = fmt.Sprintf("Error creating temporary save upload: %s", err)
-			log.Println(resp)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		temporaryPath := temporary.Name()
-		defer os.Remove(temporaryPath)
-
-		_, err = io.Copy(temporary, file)
-		if err != nil {
-			temporary.Close()
-			resp = fmt.Sprintf("Error copying uploaded save to disk: %s", err)
-			log.Println(resp)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if err := temporary.Sync(); err != nil {
-			temporary.Close()
-			resp = fmt.Sprintf("Error syncing uploaded save: %s", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if err := temporary.Close(); err != nil {
-			resp = fmt.Sprintf("Error closing uploaded save: %s", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if err := os.Chmod(temporaryPath, 0644); err != nil {
-			resp = fmt.Sprintf("Error setting save permissions: %s", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
 		server, found := serverFromRequest(r)
 		if !found {
 			w.WriteHeader(http.StatusNotFound)
 			resp = errServerNotFound
 			return
 		}
-		if err := server.ActivateSaveUpload(temporaryPath, saveFile.Filename); err != nil {
+		if err := server.ActivateSaveUpload(tempPath, saveFile.Filename); err != nil {
 			resp = fmt.Sprintf("Error activating uploaded save: %s", err)
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			return
@@ -326,6 +268,95 @@ func UploadSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp = "Uploading files successful"
+}
+
+// writeMultipartParseError returns the response body and status code for a
+// multipart parse error, preserving the existing error text and status codes.
+func writeMultipartParseError(maxUploadSize int64, err error) (interface{}, int) {
+	var maxBytesError *http.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		return uploadLimitMessage("Save file", maxUploadSize), http.StatusRequestEntityTooLarge
+	}
+	return fmt.Sprintf("Unable to parse save upload: %s", err), http.StatusBadRequest
+}
+
+// stageUploadedSaveFile validates and stages a single uploaded save file.
+// On error it writes the response and sets resp, returning false. On success
+// it returns the opened file and temporary path; the caller must defer close
+// and removal. The temporary file is removed by the caller's defer after
+// activation, matching the previous defer behaviour.
+func stageUploadedSaveFile(w http.ResponseWriter, savesDir string, maxUploadSize int64, saveFile *multipart.FileHeader, resp *interface{}) (multipart.File, string, bool) {
+	if maxUploadSize > 0 && saveFile.Size > maxUploadSize {
+		*resp = uploadLimitMessage("Save file", maxUploadSize)
+		log.Println(*resp)
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		return nil, "", false
+	}
+	if err := factorio.ValidatePathElement(saveFile.Filename); err != nil {
+		*resp = fmt.Sprintf("Invalid save filename: %s", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return nil, "", false
+	}
+	ext := filepath.Ext(saveFile.Filename)
+	if !strings.EqualFold(ext, ".zip") || strings.HasSuffix(strings.ToLower(saveFile.Filename), ".tmp.zip") {
+		// Only zip-files allowed
+		*resp = fmt.Sprintf("Fileformat {%s} is not allowed", ext)
+		w.WriteHeader(http.StatusUnsupportedMediaType)
+		return nil, "", false
+	}
+
+	file, err := saveFile.Open()
+	if err != nil {
+		*resp = fmt.Sprintf("Error opening uploaded saveFile: %s", err)
+		log.Println(*resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, "", false
+	}
+
+	temporary, err := os.CreateTemp(savesDir, ".save-upload-*.zip")
+	if err != nil {
+		file.Close()
+		*resp = fmt.Sprintf("Error creating temporary save upload: %s", err)
+		log.Println(*resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, "", false
+	}
+	temporaryPath := temporary.Name()
+
+	_, err = io.Copy(temporary, file)
+	if err != nil {
+		temporary.Close()
+		file.Close()
+		os.Remove(temporaryPath)
+		*resp = fmt.Sprintf("Error copying uploaded save to disk: %s", err)
+		log.Println(*resp)
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, "", false
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		file.Close()
+		os.Remove(temporaryPath)
+		*resp = fmt.Sprintf("Error syncing uploaded save: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, "", false
+	}
+	if err := temporary.Close(); err != nil {
+		file.Close()
+		os.Remove(temporaryPath)
+		*resp = fmt.Sprintf("Error closing uploaded save: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, "", false
+	}
+	if err := os.Chmod(temporaryPath, 0644); err != nil {
+		file.Close()
+		os.Remove(temporaryPath)
+		*resp = fmt.Sprintf("Error setting save permissions: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, "", false
+	}
+
+	return file, temporaryPath, true
 }
 
 func maximumMultipartRequestSize(maximumFileBytes int64) int64 {
@@ -352,7 +383,7 @@ func RemoveSave(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	vars := mux.Vars(r)
 	name := vars["save"]
@@ -442,7 +473,7 @@ func LogTail(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	config := bootstrap.GetConfig()
 	resp, err = factorio.TailLog()
 	if err != nil {
@@ -461,7 +492,7 @@ func LogTailScopedHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	server, ok := serverFromRequest(r)
 	if !ok {
@@ -488,7 +519,7 @@ func LoadConfig(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	config := bootstrap.GetConfig()
 	configFile := config.FactorioConfigFile
 	if server, ok := serverFromRequest(r); ok && server.ConfigDir != "" {
@@ -514,7 +545,7 @@ func StartServer(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	if !found {
 		resp = errServerNotFound
 		w.WriteHeader(http.StatusNotFound)
@@ -539,11 +570,7 @@ func StartServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request struct {
-		Savefile string `json:"savefile"`
-		BindIP   string `json:"bindip"`
-		Port     int    `json:"port"`
-	}
+	var request startServerRequest
 	err = json.Unmarshal(body, &request)
 	if err != nil {
 		resp = fmt.Sprintf("Error unmarshalling server settings JSON: %s", err)
@@ -552,35 +579,46 @@ func StartServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if savefile was submitted with request to start server.
-	if request.Savefile == "" {
-		resp = "Error starting Factorio server: No save file provided"
+	if err := validateStartRequest(request); err != nil {
+		resp = err.Error()
 		log.Println(resp)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	runStartServer(w, r, server, request, &resp)
+}
+
+// startServerRequest is the decoded body of the start server endpoint.
+type startServerRequest struct {
+	Savefile string `json:"savefile"`
+	BindIP   string `json:"bindip"`
+	Port     int    `json:"port"`
+}
+
+// validateStartRequest checks the savefile, bind IP, and port bounds.
+func validateStartRequest(request startServerRequest) error {
+	if request.Savefile == "" {
+		return errors.New("Error starting Factorio server: No save file provided")
+	}
 	parsedIP := net.ParseIP(request.BindIP)
 	if parsedIP == nil || parsedIP.To4() == nil {
-		resp = "Error starting Factorio server: invalid IPv4 bind address"
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return errors.New("Error starting Factorio server: invalid IPv4 bind address")
 	}
 	if request.Port < 1 || request.Port > 65535 {
-		resp = "Error starting Factorio server: port must be between 1 and 65535"
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return errors.New("Error starting Factorio server: port must be between 1 and 65535")
 	}
+	return nil
+}
+
+// runStartServer starts the Factorio server and waits for startup completion.
+// It writes the response status and sets resp for the handler's deferred writer.
+func runStartServer(w http.ResponseWriter, r *http.Request, server *factorio.Server, request startServerRequest, resp *interface{}) {
 	log.Printf("Starting Factorio server on %s:%d with save %q", request.BindIP, request.Port, request.Savefile)
 	startResult, startErr := server.Start(request.BindIP, request.Port, request.Savefile)
 	if startErr != nil {
-		resp = fmt.Sprintf("Error starting Factorio server: %s", startErr)
-		if errors.Is(startErr, factorio.ErrServerActive) || errors.Is(startErr, factorio.ErrWorldGenerationBusy) {
-			w.WriteHeader(http.StatusConflict)
-		} else if errors.Is(startErr, factorio.ErrInvalidServerConfiguration) {
-			w.WriteHeader(http.StatusBadRequest)
-		} else {
-			w.WriteHeader(http.StatusInternalServerError)
-		}
+		*resp = fmt.Sprintf("Error starting Factorio server: %s", startErr)
+		w.WriteHeader(startServerErrorStatus(startErr))
 		return
 	}
 
@@ -595,28 +633,42 @@ func StartServer(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case runErr := <-startResult:
-			if runErr != nil {
-				resp = fmt.Sprintf("Error starting Factorio server: %s", runErr)
-				if errors.Is(runErr, factorio.ErrWorldGenerationBusy) {
-					w.WriteHeader(http.StatusConflict)
-					return
-				}
-			} else {
-				resp = "Factorio server exited before startup completed"
-			}
-			w.WriteHeader(http.StatusInternalServerError)
+			message, status := startupExitResponse(runErr)
+			*resp = message
+			w.WriteHeader(status)
 			return
 		case <-ticker.C:
 			started = server.GetRunning()
 		case <-deadline.C:
-			resp = "Error starting Factorio server: startup timed out"
+			*resp = "Error starting Factorio server: startup timed out"
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
 	}
 
-	resp = fmt.Sprintf("Factorio server with save: %s started on port: %d", request.Savefile, request.Port)
-	log.Println(resp)
+	*resp = fmt.Sprintf("Factorio server with save: %s started on port: %d", request.Savefile, request.Port)
+	log.Println(*resp)
+}
+
+func startServerErrorStatus(err error) int {
+	if errors.Is(err, factorio.ErrServerActive) || errors.Is(err, factorio.ErrWorldGenerationBusy) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, factorio.ErrInvalidServerConfiguration) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
+func startupExitResponse(err error) (string, int) {
+	if err == nil {
+		return "Factorio server exited before startup completed", http.StatusInternalServerError
+	}
+	status := http.StatusInternalServerError
+	if errors.Is(err, factorio.ErrWorldGenerationBusy) {
+		status = http.StatusConflict
+	}
+	return fmt.Sprintf("Error starting Factorio server: %s", err), status
 }
 
 func StopServer(w http.ResponseWriter, r *http.Request) {
@@ -626,7 +678,7 @@ func StopServer(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	server, found := serverFromRequest(r)
 	if !found {
 		w.WriteHeader(http.StatusNotFound)
@@ -663,7 +715,7 @@ func KillServer(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	server, found := serverFromRequest(r)
 	if !found {
 		w.WriteHeader(http.StatusNotFound)
@@ -692,7 +744,7 @@ func CheckServer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errServerNotFound, http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	WriteResponse(w, server.Snapshot())
 }
 
@@ -703,7 +755,7 @@ func FactorioVersion(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	snapshot := factorio.GetFactorioServer().Snapshot()
 	resp["version"] = snapshot.Version.String()
 	resp["base_mod_version"] = snapshot.BaseModVersion
@@ -716,7 +768,7 @@ func FactorioReleaseStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status = releaseStatusForRequest(status, requestUserIsAdministrator(r))
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	WriteResponse(w, status)
 }
 
@@ -733,7 +785,7 @@ func GetGameMode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error reading Factorio game mode: %s", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	WriteResponse(w, status)
 }
 
@@ -754,7 +806,7 @@ func UpdateGameMode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error changing Factorio game mode: %s", err), statusCode)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	WriteResponse(w, status)
 }
 
@@ -766,7 +818,7 @@ func InstallFactorioRelease(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	var request struct {
 		Target  string `json:"target"`
 		Channel string `json:"channel"` // backwards-compatible with 0.11.0 clients
@@ -831,7 +883,7 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	body, resp, err := ReadRequestBody(w, r)
 	if err != nil {
@@ -845,18 +897,18 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&credentials); err != nil {
-		resp = "Unable to parse login request"
+		resp = errLoginRequestInvalid
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		resp = "Unable to parse login request"
+		resp = errLoginRequestInvalid
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	credentials.Username = strings.TrimSpace(credentials.Username)
 	if credentials.Username == "" || len(credentials.Username) > 256 || credentials.Password == "" || len(credentials.Password) > 1024 {
-		resp = "Unable to parse login request"
+		resp = errLoginRequestInvalid
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -917,7 +969,7 @@ func LogoutUser(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	session, resp, err := ReadSessionStore(w, r, "authentication")
 	if err != nil {
@@ -943,7 +995,7 @@ func GetCurrentLogin(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	user, ok := authenticatedUserFromRequest(r)
 	if !ok {
@@ -963,7 +1015,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	users, err := auth.listUsers()
 	if err != nil {
@@ -985,7 +1037,7 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	body, resp, err := ReadRequestBody(w, r)
 	if err != nil {
@@ -1019,7 +1071,7 @@ func RemoveUser(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	body, resp, err := ReadRequestBody(w, r)
 	if err != nil {
@@ -1055,7 +1107,7 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	body, resp, err := ReadRequestBody(w, r)
 	if err != nil {
@@ -1153,7 +1205,7 @@ func GetServerSettings(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	server, found := serverFromRequest(r)
 	if !found {
 		w.WriteHeader(http.StatusNotFound)
@@ -1173,7 +1225,7 @@ func GetServerSettingsScopedHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	server, ok := serverFromRequest(r)
 	if !ok {
@@ -1243,7 +1295,7 @@ func UpdateServerSettings(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	body, resp, err := ReadRequestBody(w, r)
 	if err != nil {

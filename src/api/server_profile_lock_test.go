@@ -73,6 +73,21 @@ func TestManagedCreationRejectsMalformedAndOversizedRequests(t *testing.T) {
 	}
 }
 
+func configurationRoundTripRouter() *mux.Router {
+	router := mux.NewRouter()
+	for _, route := range apiRoutes {
+		if route.Name != "UpdateServer" && route.Name != "GetServer" {
+			continue
+		}
+		var handler http.Handler = route.HandlerFunc
+		if route.ServerOff {
+			handler = ServerOffMiddleware(handler)
+		}
+		router.Handle("/api"+route.Pattern, handler).Methods(route.Method)
+	}
+	return router
+}
+
 func TestServerConfigurationHTTPRoundTripWhileRunning(t *testing.T) {
 	manager, err := factorio.InitServerManager()
 	if err != nil {
@@ -92,17 +107,7 @@ func TestServerConfigurationHTTPRoundTripWhileRunning(t *testing.T) {
 		}
 		server.SetRunning(previous.Running)
 	})
-	router := mux.NewRouter()
-	for _, route := range apiRoutes {
-		if route.Name != "UpdateServer" && route.Name != "GetServer" {
-			continue
-		}
-		var handler http.Handler = route.HandlerFunc
-		if route.ServerOff {
-			handler = ServerOffMiddleware(handler)
-		}
-		router.Handle("/api"+route.Pattern, handler).Methods(route.Method)
-	}
+	router := configurationRoundTripRouter()
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/servers/1", strings.NewReader(`{"use_mimalloc":true}`)))
 	if response.Code != http.StatusOK {

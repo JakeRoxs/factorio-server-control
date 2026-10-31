@@ -408,25 +408,19 @@ func validateUserPassword(password string) error {
 	return nil
 }
 
-// middleware function, that will be called for every request, that has to be authorized
+// AuthMiddleware authenticates every request that requires authorization.
+// It validates the session cookie, the stored user, and the credential version
+// before forwarding the request with the authenticated user on the context.
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, err := sessionStore.Get(r, "authentication")
+		session, err := getSessionCookie(w, r, "authentication")
 		if err != nil {
-			if session != nil {
-				session.Options.MaxAge = -1
-				err2 := session.Save(r, w)
-				if err2 != nil {
-					log.Printf("Error deleting cookie: %s", err2)
-				}
-			}
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
 
-		rawUsername, ok := session.Values["username"]
-		username, validUsername := rawUsername.(string)
-		if !ok || !validUsername || username == "" {
+		username, ok := getSessionUsername(session)
+		if !ok {
 			http.Error(w, "Could not read username from sessioncookie", http.StatusUnauthorized)
 			return
 		}
@@ -440,21 +434,61 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		rawCredentialVersion, ok := session.Values["credential_version"]
-		credentialVersion, validCredentialVersion := rawCredentialVersion.(string)
+
 		expectedCredentialVersion, versionErr := sessionCredentialVersion(user.Password)
 		if versionErr != nil {
 			http.Error(w, "unable to validate authentication", http.StatusInternalServerError)
 			return
 		}
-		if !ok || !validCredentialVersion || credentialVersion == "" || subtle.ConstantTimeCompare([]byte(credentialVersion), []byte(expectedCredentialVersion)) != 1 {
+		if !validateCredentialVersion(session, expectedCredentialVersion) {
 			http.Error(w, "authentication is no longer valid", http.StatusUnauthorized)
 			return
 		}
+
 		user.Password = ""
 		ctx := context.WithValue(r.Context(), authenticatedUserContextKey{}, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// getSessionCookie retrieves the named session from the request. On error it
+// expires any stale cookie and returns the error so the caller can reject the
+// request with the appropriate status.
+func getSessionCookie(w http.ResponseWriter, r *http.Request, name string) (*sessions.Session, error) {
+	session, err := sessionStore.Get(r, name)
+	if err != nil {
+		if session != nil {
+			session.Options.MaxAge = -1
+			if err2 := session.Save(r, w); err2 != nil {
+				log.Printf("Error deleting cookie: %s", err2)
+			}
+		}
+		return nil, err
+	}
+	return session, nil
+}
+
+// getSessionUsername extracts the username from the session values. It returns
+// false when the value is absent, not a string, or empty.
+func getSessionUsername(session *sessions.Session) (string, bool) {
+	rawUsername, ok := session.Values["username"]
+	username, validUsername := rawUsername.(string)
+	if !ok || !validUsername || username == "" {
+		return "", false
+	}
+	return username, true
+}
+
+// validateCredentialVersion reports whether the session credential version
+// matches the expected HMAC of the user's password hash. A missing or
+// mismatched version invalidates the session.
+func validateCredentialVersion(session *sessions.Session, expectedCredentialVersion string) bool {
+	rawCredentialVersion, ok := session.Values["credential_version"]
+	credentialVersion, validCredentialVersion := rawCredentialVersion.(string)
+	if !ok || !validCredentialVersion || credentialVersion == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(credentialVersion), []byte(expectedCredentialVersion)) == 1
 }
 
 func authenticatedUserFromRequest(r *http.Request) (User, bool) {

@@ -20,44 +20,24 @@ func requestSavesDirectory(r *http.Request) string {
 // service a different browser's workspace.
 func SelectedServerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if route := mux.CurrentRoute(r); route != nil {
-			if route.GetName() == "" {
-				next.ServeHTTP(w, r)
-				return
-			}
+		if route := mux.CurrentRoute(r); route != nil && route.GetName() == "" {
+			next.ServeHTTP(w, r)
+			return
 		}
 		path := strings.TrimSuffix(r.URL.Path, "/")
 		// Manager-wide discovery must remain usable even when a bookmarked
 		// workspace refers to a server that has since been deleted.
-		if path == "/api/servers" || path == "/api/servers/next" || strings.HasPrefix(path, "/api/user/") || path == "/api/logout" ||
-			path == "/api/profiles" && r.Method == http.MethodGet || path == "/api/server/autostart" ||
-			path == "/api/mods/portal/preferences" || path == "/api/backups/limits" || path == "/api/mods/packs/list" {
+		if managerBypassRoute(path, r.Method) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		vars := mux.Vars(r)
-		id := vars["serverID"]
-		if id == "" {
-			id = r.Header.Get("X-FSM-Server-ID")
-			if id == "" {
-				id = r.URL.Query().Get("server")
-			}
-		}
+		id := resolveServerID(r)
 		if id == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if factorio.ValidatePathElement(id) != nil {
-			http.Error(w, "Invalid server selection", http.StatusBadRequest)
-			return
-		}
-		if vars == nil {
-			vars = make(map[string]string)
-		}
-		vars["selectedServerID"] = id
-		r = mux.SetURLVars(r, vars)
-		if _, found := serverFromRequest(r); !found {
-			http.Error(w, errServerNotFound, http.StatusNotFound)
+		r, ok := resolveAndBindServer(w, r, id)
+		if !ok {
 			return
 		}
 		if id != factorio.DefaultServerID && !secondaryServerRouteSupported(path, r.Method) {
@@ -66,6 +46,57 @@ func SelectedServerMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// managerBypassRoute reports routes that must remain usable through manager-wide
+// discovery even when a bookmarked workspace refers to a server that has since
+// been deleted.
+func managerBypassRoute(path, method string) bool {
+	if path == "/api/servers" || path == "/api/servers/next" || strings.HasPrefix(path, "/api/user/") || path == "/api/logout" {
+		return true
+	}
+	if path == "/api/server/autostart" || path == "/api/mods/portal/preferences" || path == "/api/backups/limits" || path == "/api/mods/packs/list" {
+		return true
+	}
+	if path == "/api/profiles" && method == http.MethodGet {
+		return true
+	}
+	return false
+}
+
+// resolveServerID returns the server selection from route vars, then the
+// X-FSM-Server-ID header, then the server query parameter.
+func resolveServerID(r *http.Request) string {
+	id := mux.Vars(r)["serverID"]
+	if id != "" {
+		return id
+	}
+	id = r.Header.Get("X-FSM-Server-ID")
+	if id != "" {
+		return id
+	}
+	return r.URL.Query().Get("server")
+}
+
+// resolveAndBindServer validates the selection, binds selectedServerID onto the
+// request, and resolves the server. It reports validation/not-found errors
+// through the response writer and returns false when the request must stop.
+func resolveAndBindServer(w http.ResponseWriter, r *http.Request, id string) (*http.Request, bool) {
+	if err := factorio.ValidatePathElement(id); err != nil {
+		http.Error(w, "Invalid server selection", http.StatusBadRequest)
+		return r, false
+	}
+	vars := mux.Vars(r)
+	if vars == nil {
+		vars = make(map[string]string)
+	}
+	vars["selectedServerID"] = id
+	r = mux.SetURLVars(r, vars)
+	if _, found := serverFromRequest(r); !found {
+		http.Error(w, errServerNotFound, http.StatusNotFound)
+		return r, false
+	}
+	return r, true
 }
 
 func secondaryServerRouteSupported(path, method string) bool {

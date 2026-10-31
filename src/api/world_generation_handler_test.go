@@ -41,3 +41,22 @@ func TestWorldGenerationErrorStatuses(t *testing.T) {
 		require.Equal(t, test.status, recorder.Code)
 	}
 }
+
+func TestWorldGenerationInvalidRequestsPreserveErrorHeaders(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"preview", PreviewWorld},
+		{"create", CreateWorld},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			test.handler(response, httptest.NewRequest(http.MethodPost, "/", strings.NewReader("invalid JSON")))
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			require.Equal(t, "text/plain; charset=utf-8", response.Header().Get("Content-Type"))
+			require.Empty(t, response.Header().Get("Cache-Control"))
+			require.Contains(t, response.Body.String(), "Unable to parse world settings:")
+		})
+	}
+}

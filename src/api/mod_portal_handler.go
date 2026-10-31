@@ -24,7 +24,7 @@ func ModPortalListModsHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var statusCode int
 	resp, err, statusCode = factorio.ModPortalList()
@@ -45,7 +45,7 @@ func ModPortalModInfoHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	vars := mux.Vars(r)
 	modId := vars["mod"]
@@ -71,7 +71,7 @@ func ModPortalInstallHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	// Get Data out of the request
 	var data struct {
@@ -106,7 +106,7 @@ func ModPortalInstallHandler(w http.ResponseWriter, r *http.Request) {
 func ModPortalInstallPlanHandler(w http.ResponseWriter, r *http.Request) {
 	var resp interface{}
 	defer func() { WriteResponse(w, resp) }()
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var request factorio.ModInstallPlanRequest
 	var err error
@@ -128,7 +128,7 @@ func ModPortalInstallPlanHandler(w http.ResponseWriter, r *http.Request) {
 func ModPortalInstallResolvedHandler(w http.ResponseWriter, r *http.Request) {
 	var resp interface{}
 	defer func() { WriteResponse(w, resp) }()
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var request factorio.ModInstallPlanRequest
 	var err error
@@ -155,7 +155,7 @@ func ModPortalLoginHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var data struct {
 		Username string `json:"username"`
@@ -221,7 +221,7 @@ func ModPortalInstallMultipleHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var data []struct {
 		Name    string           `json:"name"`
@@ -247,33 +247,10 @@ func ModPortalInstallMultipleHandler(w http.ResponseWriter, r *http.Request) {
 		if datum.Name == "base" {
 			continue
 		}
-		details, err, statusCode := factorio.ModPortalModDetails(datum.Name)
-		if err != nil || statusCode != http.StatusOK {
-			resp = fmt.Sprintf("Error in getting mod details from mod portal: %s", err)
-			log.Println(resp)
-			w.WriteHeader(http.StatusInternalServerError)
+		message, ok := installModPortalVersion(w, &modList, datum.Name, datum.Version)
+		if !ok {
+			resp = message
 			return
-		}
-
-		//find correct mod-version
-		var found = false
-		for _, release := range details.Releases {
-			if release.Version.Equals(datum.Version) {
-				found = true
-
-				err := modList.DownloadMod(release.DownloadURL, release.FileName, details.Name)
-				if err != nil {
-					resp = fmt.Sprintf("Error downloading mod {%s}, error: %s", details.Name, err)
-					log.Println(resp)
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				break
-			}
-		}
-		if !found {
-			log.Printf("Error downloading mod {%s}, error: %s", details.Name, "version not found")
-			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}
 

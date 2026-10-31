@@ -67,7 +67,7 @@ func ListInstalledModsHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	modList, resp, err := createModsForRequest(w, r)
 	if err != nil {
@@ -86,7 +86,7 @@ func ListServerModsHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	server, ok := serverFromRequest(r)
 	if !ok {
@@ -115,7 +115,7 @@ func ModToggleHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var data struct {
 		Name string `json:"name"`
@@ -152,7 +152,7 @@ func ModDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var data struct {
 		Name string `json:"name"`
@@ -192,7 +192,7 @@ func ModDeleteAllHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	//delete mods folder
 	err = factorio.DeleteAllMods()
@@ -218,7 +218,7 @@ func ModUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	//Get Data out of the request
 	var modData struct {
@@ -266,19 +266,10 @@ func ModUploadHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	config := bootstrap.GetConfig()
-	if config.MaxUploadSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, config.MaxUploadSize)
-	}
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		resp = fmt.Sprintf("error parsing mod upload: %s", err)
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-		} else {
-			w.WriteHeader(http.StatusBadRequest)
-		}
+	resp, err = parseModUpload(w, r, config.MaxUploadSize, "mod upload")
+	if err != nil {
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
@@ -360,7 +351,7 @@ func LoadModsFromSaveHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	//Get Data out of the request
 	var saveFileStruct struct {
@@ -408,7 +399,7 @@ func LoadModsFromSaveHandler(w http.ResponseWriter, r *http.Request) {
 func ImportModsFromSaveHandler(w http.ResponseWriter, r *http.Request) {
 	var resp interface{}
 	defer func() { WriteResponse(w, resp) }()
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var request struct {
 		Name string `json:"saveFile"`

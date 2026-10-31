@@ -78,31 +78,57 @@ func (client *wsClient) readPump() {
 			break
 		}
 
-		if message.RoomName == "" {
-			// controls messages will not sent to other clients, they only are relevant for the server
-			if message.Controls != (WsControls{}) {
-				// this message is a control message, do its job!
-				switch message.Controls.Type {
-				case "subscribe":
-					if !client.maySubscribeRoom(message.Controls.Value) {
-						continue
-					}
-					room := client.hub.GetRoom(message.Controls.Value)
-					room.register <- client
-				case "unsubscribe":
-					if !clientRoomAllowed(message.Controls.Value) {
-						continue
-					}
-					room := client.hub.GetRoom(message.Controls.Value)
-					room.unregister <- client
-				case "command":
-					if client.mayDispatchControl(message.Controls) {
-						client.hub.dispatchControl(message.Controls)
-					}
-				}
-			}
+		client.handleIncomingMessage(message)
+	}
+}
+
+// handleIncomingMessage processes a single websocket message. Messages with a
+// non-empty room name are ignored; empty-room messages with controls are
+// executed as server-side control actions.
+func (client *wsClient) handleIncomingMessage(message wsMessage) {
+	if message.RoomName != "" {
+		return
+	}
+	if message.Controls == (WsControls{}) {
+		return
+	}
+	client.handleControlMessage(message.Controls)
+}
+
+// handleControlMessage executes a server-side control message. Subscribe and
+// unsubscribe are subject to room allowlist and current authorization; commands
+// require dynamically re-evaluated administrator capability.
+func (client *wsClient) handleControlMessage(controls WsControls) {
+	switch controls.Type {
+	case "subscribe":
+		client.handleSubscribe(controls.Value)
+	case "unsubscribe":
+		client.handleUnsubscribe(controls.Value)
+	case "command":
+		if client.mayDispatchControl(controls) {
+			client.hub.dispatchControl(controls)
 		}
 	}
+}
+
+// handleSubscribe subscribes the client to a room when allowed by the allowlist
+// and the currently re-evaluated administrator capability.
+func (client *wsClient) handleSubscribe(name string) {
+	if !client.maySubscribeRoom(name) {
+		return
+	}
+	room := client.hub.GetRoom(name)
+	room.register <- client
+}
+
+// handleUnsubscribe unsubscribes the client from a room when the room is on the
+// allowlist.
+func (client *wsClient) handleUnsubscribe(name string) {
+	if !clientRoomAllowed(name) {
+		return
+	}
+	room := client.hub.GetRoom(name)
+	room.unregister <- client
 }
 
 func (client *wsClient) mayDispatchControl(controls WsControls) bool {

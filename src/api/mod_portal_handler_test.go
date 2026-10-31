@@ -44,7 +44,7 @@ func TestModPortalInstallHandler(t *testing.T) {
 
 		expected := `{"mods":[{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true}]}`
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	ModEmptyBodyTest(t, method, route, handlerFunc)
@@ -57,7 +57,7 @@ func TestModPortalInstallHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`{"modName": "belt-balancer", "downloadUrl": "/download/belt-balancer/95bcf4f000b96b22c", "fileName": "belt-balancer_3.0.0.zip"}`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 }
 
@@ -76,7 +76,7 @@ func TestModPortalInstallMultipleHandler(t *testing.T) {
 
 		expected := `{"mods":[{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true},{"name":"train-station-overview","version":"3.0.0","title":"Train Station Overview","author":"knoxfighter","file_name":"train-station-overview_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true}]}`
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	t.Run("unknown mod", func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestModPortalInstallMultipleHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`[{"name": "askdhcb", "version": "2.1.2"}]`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 
 	t.Run("unknown version", func(t *testing.T) {
@@ -94,7 +94,7 @@ func TestModPortalInstallMultipleHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`[{"name": "belt-balancer", "version": "0.1.12"}]`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 
 	ModEmptyBodyTest(t, method, route, handlerFunc)

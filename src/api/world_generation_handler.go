@@ -20,8 +20,8 @@ func GetWorldGenerationOptions(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, fmt.Sprintf("Unable to inspect world generation options: %s", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	WriteResponse(w, options)
 }
 
@@ -39,9 +39,9 @@ func PreviewWorld(w http.ResponseWriter, r *http.Request) {
 		writeWorldGenerationError(w, "Unable to generate map preview", err)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set(headerContentType, "image/png")
 	w.Header().Set("Content-Length", strconv.Itoa(len(preview)))
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	planet := strings.TrimSpace(strings.ToLower(request.Planet))
 	if planet == "" {
 		planet = "nauvis"
@@ -66,8 +66,8 @@ func CreateWorld(w http.ResponseWriter, r *http.Request) {
 		writeWorldGenerationError(w, "Unable to create world", err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.Header().Set(headerCacheControl, cacheControlNoStore)
 	WriteResponse(w, save)
 }
 

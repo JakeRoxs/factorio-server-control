@@ -153,7 +153,17 @@ func CleanupMods(t *testing.T) {
 	}
 }
 
-func CallRoute(t *testing.T, method string, baseRoute string, route string, body io.Reader, handlerFunc http.HandlerFunc, statusCode int, expected string) {
+// routeExpectation groups the response expectation for a route call: the HTTP
+// status code and the optional expected JSON body. Grouping these related
+// arguments keeps CallRoute under the authorized parameter limit.
+type routeExpectation struct {
+	statusCode int
+	expected   string
+}
+
+func CallRoute(t *testing.T, method string, baseRoute string, route string, body io.Reader, handlerFunc http.HandlerFunc, expectation routeExpectation) {
+	t.Helper()
+
 	// create request to send
 	request, err := http.NewRequest(method, route, body)
 	if err != nil {
@@ -172,15 +182,38 @@ func CallRoute(t *testing.T, method string, baseRoute string, route string, body
 	//handler.ServeHTTP(recorder, request)
 
 	// status has to be 200
-	if recorder.Code != statusCode {
-		t.Fatalf("Wrong Status Code. expected %v - got %v", statusCode, recorder.Code)
+	if recorder.Code != expectation.statusCode {
+		t.Fatalf("Wrong Status Code. expected %v - got %v", expectation.statusCode, recorder.Code)
 	}
 
-	if expected != "" {
+	if expectation.expected != "" {
 		actual := recorder.Body.String()
 
-		require.JSONEqf(t, expected, actual, `Wrong Body for route "%s". expected "%v" - actual "%v"`, route, expected, actual)
+		require.JSONEqf(t, expectation.expected, actual, `Wrong Body for route "%s". expected "%v" - actual "%v"`, route, expectation.expected, actual)
 	}
+}
+
+// assertModEnabledState verifies that the named mod in the mods directory has
+// the expected enabled state. It fails the test if the mod is missing or its
+// state does not match, preserving the missing-mod failure and both enabled
+// states for toggle checks.
+func assertModEnabledState(t *testing.T, modsDir, modName string, enabled bool) {
+	t.Helper()
+
+	modList, err := factorio.NewMods(modsDir)
+	if err != nil {
+		t.Fatalf("Error creating Mods object: %s", err)
+	}
+	for _, mod := range modList.ModSimpleList.Mods {
+		if mod.Name != modName {
+			continue
+		}
+		if mod.Enabled != enabled {
+			t.Fatalf("Mod %q enabled = %t; want %t", modName, mod.Enabled, enabled)
+		}
+		return
+	}
+	t.Fatalf("Mod %q not found", modName)
 }
 
 func ModEmptyBodyTest(t *testing.T, method string, route string, handlerFunc http.HandlerFunc) {
@@ -188,7 +221,7 @@ func ModEmptyBodyTest(t *testing.T, method string, route string, handlerFunc htt
 		SetupMods(t, true)
 		defer CleanupMods(t)
 
-		CallRoute(t, method, route, route, nil, handlerFunc, http.StatusBadRequest, "")
+		CallRoute(t, method, route, route, nil, handlerFunc, routeExpectation{http.StatusBadRequest, ""})
 	})
 }
 
@@ -199,7 +232,7 @@ func ModInvalidJsonTest(t *testing.T, method, route string, handlerFunc http.Han
 
 		requestBody := strings.NewReader(`{"name": "asdc"`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusBadRequest, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusBadRequest, ""})
 	})
 }
 
@@ -207,7 +240,7 @@ func ModNotExistTest(t *testing.T, method, route string, handlerFunc http.Handle
 	t.Run("mod not exist", func(t *testing.T) {
 		requestBody := strings.NewReader(`{"name": "lasdg"}`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 }
 
@@ -255,7 +288,7 @@ func TestListInstalledModsHandler(t *testing.T) {
   }
 ]`
 
-	CallRoute(t, "GET", route, route, nil, ListInstalledModsHandler, http.StatusOK, expected)
+	CallRoute(t, "GET", route, route, nil, ListInstalledModsHandler, routeExpectation{http.StatusOK, expected})
 }
 
 func TestModToggleHandler(t *testing.T) {
@@ -274,28 +307,10 @@ func TestModToggleHandler(t *testing.T) {
 		// mod is now deactivated
 		expected := "false"
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 
 		// check if changes happenes
-		config := bootstrap.GetConfig()
-		modList, err := factorio.NewMods(config.FactorioModsDir)
-		if err != nil {
-			t.Fatalf("Error creating Mods object: %s", err)
-		}
-		found := false
-		for _, mod := range modList.ModSimpleList.Mods {
-			if mod.Name == "belt-balancer" {
-				// this mod has to be deactivated now
-				if mod.Enabled {
-					t.Fatalf("Mod is wrongly enabled, it should be disabled by now")
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("Mod not found")
-		}
+		assertModEnabledState(t, bootstrap.GetConfig().FactorioModsDir, "belt-balancer", false)
 
 		// toggle again, to check if the other direction also works
 		// mod is now activated again
@@ -304,26 +319,9 @@ func TestModToggleHandler(t *testing.T) {
 		// reset request body, it has to be red again
 		requestBody.Seek(0, 0)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 
-		modList, err = factorio.NewMods(config.FactorioModsDir)
-		if err != nil {
-			t.Fatalf("Error creating Mods object: %s", err)
-		}
-		found = false
-		for _, mod := range modList.ModSimpleList.Mods {
-			if mod.Name == "belt-balancer" {
-				// this mod has to be deactivated now
-				if !mod.Enabled {
-					t.Fatalf("Mod is wrongly disabled, it should be enabled again")
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("Mod not found")
-		}
+		assertModEnabledState(t, bootstrap.GetConfig().FactorioModsDir, "belt-balancer", true)
 	})
 
 	ModEmptyBodyTest(t, method, route, handlerFunc)
@@ -346,7 +344,7 @@ func TestModDeleteHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`{"name": "belt-balancer"}`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusOK, `"belt-balancer"`)
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, `"belt-balancer"`})
 
 		// check if mod is really not installed anymore
 		config := bootstrap.GetConfig()
@@ -377,7 +375,7 @@ func TestModDeleteAllHandler(t *testing.T) {
 		SetupMods(t, false)
 		defer CleanupMods(t)
 
-		CallRoute(t, method, route, route, nil, handlerFunc, http.StatusOK, "null")
+		CallRoute(t, method, route, route, nil, handlerFunc, routeExpectation{http.StatusOK, "null"})
 
 		// check if no mods are there
 		config := bootstrap.GetConfig()
@@ -406,7 +404,7 @@ func TestModUpdateHandler(t *testing.T) {
 
 		expected := `{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true}`
 
-		CallRoute(t, method, route, route, strings.NewReader(requestBodySuccess), handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, strings.NewReader(requestBodySuccess), handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	t.Run("success with disabled mod", func(t *testing.T) {
@@ -426,7 +424,7 @@ func TestModUpdateHandler(t *testing.T) {
 
 		expected := `{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":false}`
 
-		CallRoute(t, method, route, route, strings.NewReader(requestBodySuccess), handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, strings.NewReader(requestBodySuccess), handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	ModEmptyBodyTest(t, method, route, handlerFunc)
@@ -439,7 +437,7 @@ func TestModUpdateHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`{"modName": "alfbasd", "downloadUrl": "/download/belt-balancer/5fc1aca2bfe1b005c6943bf1", "fileName": "belt-balancer_3.0.0.zip"}`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusNotFound, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusNotFound, ""})
 	})
 
 	t.Run("downloadUrl invalid", func(t *testing.T) {
@@ -448,23 +446,22 @@ func TestModUpdateHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`{"modName": "belt-balancer", "downloadUrl": "/download/belt-balancer/bfe1b005c6943bf1", "fileName": "belt-balancer_3.0.0.zip"}`)
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 }
 
-func ModUploadRequest(t *testing.T, body bool, filePath string) *httptest.ResponseRecorder {
-	CheckShort(t)
-
-	var err error
-	method := "POST"
-	route := "/api/mods/upload"
-	handlerFunc := ModUploadHandler
+// buildMultipartUploadRequest builds a multipart form request body for mod upload
+// tests. If body is true and filePath is non-empty, the file is included as
+// "mod_file". It returns the request body and the multipart content type. This
+// helper is shared by the mod and modpack upload tests to avoid duplicated
+// request-body construction.
+func buildMultipartUploadRequest(t *testing.T, body bool, filePath string) (*bytes.Buffer, string) {
+	t.Helper()
 
 	requestBody := &bytes.Buffer{}
-
 	writer := multipart.NewWriter(requestBody)
 
-	if body {
+	if body && filePath != "" {
 		file, err := os.Open(filePath)
 		if err == nil {
 			assert.NoError(t, err, "error opening mod file")
@@ -474,26 +471,36 @@ func ModUploadRequest(t *testing.T, body bool, filePath string) *httptest.Respon
 
 			_, err = io.Copy(formFile, file)
 			assert.NoError(t, err, "error copying file to form")
+
+			file.Close()
 		}
 	}
 
-	err = writer.Close()
+	err := writer.Close()
 	if err != nil {
 		t.Fatalf("error closing the multipart writer: %s", err)
 	}
 
-	// create request to send
+	return requestBody, writer.FormDataContentType()
+}
+
+func ModUploadRequest(t *testing.T, body bool, filePath string) *httptest.ResponseRecorder {
+	CheckShort(t)
+
+	method := "POST"
+	route := "/api/mods/upload"
+	handlerFunc := ModUploadHandler
+
+	requestBody, contentType := buildMultipartUploadRequest(t, body, filePath)
+
 	request, err := http.NewRequest(method, route, requestBody)
 	assert.NoError(t, err, "Error creating request")
-	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Content-Type", contentType)
 
-	// create response recorder
 	recorder := httptest.NewRecorder()
 
-	// get the handler, where the request is handled
 	handler := http.HandlerFunc(handlerFunc)
 
-	// call the handler directly
 	handler.ServeHTTP(recorder, request)
 
 	return recorder
@@ -629,5 +636,5 @@ func Test_018_10_Compatibility(t *testing.T) {
   }
 ]`
 
-	CallRoute(t, "GET", route, route, nil, ListInstalledModsHandler, http.StatusOK, expected)
+	CallRoute(t, "GET", route, route, nil, ListInstalledModsHandler, routeExpectation{http.StatusOK, expected})
 }

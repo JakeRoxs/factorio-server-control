@@ -66,7 +66,6 @@ func TestMapSnapshotHandlers(t *testing.T) {
 	getRecorder := httptest.NewRecorder()
 	GetMapSnapshot(getRecorder, httptest.NewRequest(http.MethodGet, "/api/map-snapshot", nil))
 	require.Equal(t, http.StatusOK, getRecorder.Code)
-	assert.Equal(t, "no-store", getRecorder.Header().Get("Cache-Control"))
 	assert.Contains(t, getRecorder.Body.String(), `"interval_minutes":60`)
 	assert.Contains(t, getRecorder.Body.String(), `"enabled":true`)
 	assert.Contains(t, getRecorder.Body.String(), `"automatic_only_when_no_players":false`)
@@ -102,6 +101,25 @@ func TestMapSnapshotHandlers(t *testing.T) {
 	require.Equal(t, http.StatusOK, entitiesRecorder.Code)
 	assert.Equal(t, "application/x-ndjson", entitiesRecorder.Header().Get("Content-Type"))
 	assert.Contains(t, entitiesRecorder.Body.String(), "assembling-machine-3")
+
+	for _, recorder := range []*httptest.ResponseRecorder{getRecorder, refreshRecorder, settingsRecorder, legacySettingsRecorder} {
+		assert.Equal(t, "application/json;charset=UTF-8", recorder.Header().Get("Content-Type"))
+	}
+	for _, recorder := range []*httptest.ResponseRecorder{getRecorder, refreshRecorder, settingsRecorder, legacySettingsRecorder, imageRecorder, entitiesRecorder} {
+		assert.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	}
+
+	t.Run("partial image response preserves headers", func(t *testing.T) {
+		rangeRequest := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/map-snapshot/surfaces/1", nil), map[string]string{"surface": "1"})
+		rangeRequest.Header.Set("Range", "bytes=0-0")
+		rangeRecorder := httptest.NewRecorder()
+		GetMapSnapshotImage(rangeRecorder, rangeRequest)
+		require.Equal(t, http.StatusPartialContent, rangeRecorder.Code)
+		assert.Equal(t, "image/png", rangeRecorder.Header().Get("Content-Type"))
+		assert.Equal(t, "no-store", rangeRecorder.Header().Get("Cache-Control"))
+		assert.Equal(t, "bytes 0-0/3", rangeRecorder.Header().Get("Content-Range"))
+		assert.Equal(t, "p", rangeRecorder.Body.String())
+	})
 }
 
 func TestMapSnapshotHandlersValidateRequestsAndErrors(t *testing.T) {

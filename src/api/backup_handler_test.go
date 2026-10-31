@@ -34,6 +34,7 @@ func TestBackupUploadLimitsAreAdminOnlyAndReadOnly(t *testing.T) {
 	recorder = httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
 	assert.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
 	var data map[string]int64
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &data))
@@ -134,4 +135,36 @@ func TestBackupUploadRejectsMalformedDataWithoutEchoingContents(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, recorder.Code)
 		assert.NotContains(t, recorder.Body.String(), "SECRET")
 	}
+}
+
+func TestBackupUploadErrorPathsReturnNoopCleanup(t *testing.T) {
+	// Oversized ContentLength: nothing allocated, closure must be a no-op.
+	oversized := httptest.NewRequest(http.MethodPost, "/", &backupUnreadBody{})
+	oversized.ContentLength = bootstrap.GetConfig().MaxUploadSize + 1
+	oversized.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	_, _, cleanup, ok := backupUpload(httptest.NewRecorder(), oversized)
+	assert.False(t, ok)
+	assert.NotPanics(t, cleanup)
+
+	// Malformed multipart body: ParseMultipartForm fails, cleanup() runs,
+	// returned closure is a no-op.
+	malformed := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("not multipart data")))
+	malformed.ContentLength = -1
+	malformed.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	_, _, cleanup, ok = backupUpload(httptest.NewRecorder(), malformed)
+	assert.False(t, ok)
+	assert.NotPanics(t, cleanup)
+
+	// Missing backup file: validation fails after cleanup() ran,
+	// returned closure is a no-op.
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	require.NoError(t, writer.WriteField("selection", "[]"))
+	require.NoError(t, writer.Close())
+	missing := httptest.NewRequest(http.MethodPost, "/", &buffer)
+	missing.ContentLength = -1
+	missing.Header.Set("Content-Type", writer.FormDataContentType())
+	_, _, cleanup, ok = backupUpload(httptest.NewRecorder(), missing)
+	assert.False(t, ok)
+	assert.NotPanics(t, cleanup)
 }

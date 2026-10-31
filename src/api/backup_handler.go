@@ -16,6 +16,11 @@ import (
 
 const backupMultipartReserve = maxProfileRequestSize + (4 << 10)
 
+// backupContentTypeJSON is the response content type for backup preview/import
+// JSON responses. It intentionally omits the charset parameter to match the
+// existing backup API contract.
+const backupContentTypeJSON = "application/json"
+
 type backupUploadLimits struct {
 	MaxUploadBytes int64 `json:"max_upload_bytes"`
 	MaxFileBytes   int64 `json:"max_file_bytes"`
@@ -35,7 +40,7 @@ func effectiveBackupUploadLimits(configured int64) backupUploadLimits {
 }
 
 func BackupUploadLimitsHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, backupContentTypeJSON)
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(effectiveBackupUploadLimits(bootstrap.GetConfig().MaxUploadSize))
 }
@@ -78,7 +83,7 @@ func ExportProfileBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set(headerContentType, "application/zip")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", `attachment; filename="factorio-profiles-backup.zip"`)
 	http.ServeContent(w, r, "factorio-profiles-backup.zip", time.Time{}, file)
@@ -93,7 +98,9 @@ func backupUpload(w http.ResponseWriter, r *http.Request) (multipart.File, int64
 	limit := effectiveBackupUploadLimits(bootstrap.GetConfig().MaxUploadSize).MaxUploadBytes
 	if r.ContentLength > limit {
 		backupUploadTooLarge(w, limit)
-		return nil, 0, func() {}, false
+		return nil, 0, func() {
+			// No multipart resources were allocated before rejecting the size.
+		}, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
@@ -104,18 +111,24 @@ func backupUpload(w http.ResponseWriter, r *http.Request) (multipart.File, int64
 		} else {
 			http.Error(w, "Invalid backup upload.", http.StatusBadRequest)
 		}
-		return nil, 0, func() {}, false
+		return nil, 0, func() {
+			// Multipart resources were already cleaned up on the error path.
+		}, false
 	}
 	if len(r.MultipartForm.File) != 1 || len(r.MultipartForm.File["backup"]) != 1 || len(r.FormValue("selection")) > maxProfileRequestSize || len(r.FormValue("profile_id")) > 64 {
 		cleanup()
 		http.Error(w, "Choose one backup ZIP.", http.StatusBadRequest)
-		return nil, 0, func() {}, false
+		return nil, 0, func() {
+			// Multipart resources were already cleaned up on the error path.
+		}, false
 	}
 	file, header, err := r.FormFile("backup")
 	if err != nil {
 		cleanup()
 		http.Error(w, "Choose a backup ZIP.", http.StatusBadRequest)
-		return nil, 0, func() {}, false
+		return nil, 0, func() {
+			// Multipart resources were already cleaned up on the error path.
+		}, false
 	}
 	return file, header.Size, func() { file.Close(); cleanup() }, true
 }
@@ -131,7 +144,7 @@ func PreviewProfileBackupHandler(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, backupContentTypeJSON)
 	json.NewEncoder(w).Encode(preview)
 }
 
@@ -165,7 +178,7 @@ func PreviewModBackupHandler(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, backupContentTypeJSON)
 	json.NewEncoder(w).Encode(preview)
 }
 
@@ -180,6 +193,6 @@ func RestoreModBackupHandler(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, backupContentTypeJSON)
 	json.NewEncoder(w).Encode(preview)
 }

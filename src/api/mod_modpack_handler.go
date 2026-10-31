@@ -62,7 +62,7 @@ func ModPackListHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	modPackMap, resp, err := CreateNewModPackMap(w)
 	if err != nil {
@@ -80,7 +80,7 @@ func ModPackCreateHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var modPackStruct struct {
 		Name string `json:"name"`
@@ -114,7 +114,7 @@ func ModPackDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var modPackMap factorio.ModPackMap
 	var modPackName string
@@ -137,7 +137,7 @@ func ModPackDeleteHandler(w http.ResponseWriter, r *http.Request) {
 func ModPackDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	err, _, modPackName, resp := ReadModPackRequest(w, r)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		WriteResponse(w, resp)
 		return
 	}
@@ -157,7 +157,7 @@ func ModPackLoadHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var modPackMap factorio.ModPackMap
 	var modPackName string
@@ -191,7 +191,7 @@ func ModPackModListHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	err, modPackMap, modPackName, resp := ReadModPackRequest(w, r)
 	if err != nil {
@@ -209,7 +209,7 @@ func ModPackModToggleHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	err, packMap, packName, resp := ReadModPackRequest(w, r)
 	if err != nil {
@@ -241,7 +241,7 @@ func ModPackModDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	err, packMap, packName, resp := ReadModPackRequest(w, r)
 	if err != nil {
@@ -275,7 +275,7 @@ func ModPackModUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	//Get Data out of the request
 	var modPackStruct struct {
@@ -359,21 +359,12 @@ func ModPackModUploadHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	config := bootstrap.GetConfig()
-	if config.MaxUploadSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, config.MaxUploadSize)
-	}
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		resp = fmt.Sprintf("error parsing mod-pack upload: %s", err)
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-		} else {
-			w.WriteHeader(http.StatusBadRequest)
-		}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	resp, err = parseModUpload(w, r, bootstrap.GetConfig().MaxUploadSize, "mod-pack upload")
+	if err != nil {
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 
 	formFile, fileHeader, err := r.FormFile("mod_file")
 	if err != nil {
@@ -413,7 +404,7 @@ func ModPackModPortalInstallHandler(w http.ResponseWriter, r *http.Request) {
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	// Get Data out of the request
 	var data struct {
@@ -451,7 +442,7 @@ func ModPackModPortalInstallMultipleHandler(w http.ResponseWriter, r *http.Reque
 		WriteResponse(w, resp)
 	}()
 
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	var data []struct {
 		Name    string           `json:"name"`
@@ -473,39 +464,65 @@ func ModPackModPortalInstallMultipleHandler(w http.ResponseWriter, r *http.Reque
 	}
 	modList := packMap[packName].Mods
 	for _, datum := range data {
-		details, err, statusCode := factorio.ModPortalModDetails(datum.Name)
-		if err != nil || statusCode != http.StatusOK {
-			resp = fmt.Sprintf("Error in getting mod details from mod portal: %s", err)
-			log.Println(resp)
-			w.WriteHeader(http.StatusInternalServerError)
+		message, ok := installModPortalVersion(w, &modList, datum.Name, datum.Version)
+		if !ok {
+			resp = message
 			return
-		}
-
-		//find correct mod-version
-		var found = false
-
-		for _, release := range details.Releases {
-			if release.Version.Equals(datum.Version) {
-				found = true
-
-				err := modList.DownloadMod(release.DownloadURL, release.FileName, details.Name)
-				if err != nil {
-					resp = fmt.Sprintf("Error downloading mod {%s}, error: %s", details.Name, err)
-					log.Println(resp)
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				break
-			}
-		}
-
-		if !found {
-			log.Printf("Error downloading mod {%s}, error: %s", details.Name, "version not found")
-			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}
 
 	resp = modList.ListInstalledMods()
+}
+
+// parseModUpload applies the same upload limit and multipart parser to both
+// mod upload routes. The caller must remove the form's temporary files.
+func parseModUpload(w http.ResponseWriter, r *http.Request, maxUploadSize int64, description string) (interface{}, error) {
+	if maxUploadSize > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		return fmt.Sprintf("error parsing %s: %s", description, err), err
+	}
+	return nil, nil
+}
+
+func installModPortalVersion(w http.ResponseWriter, mods *factorio.Mods, name string, version factorio.Version) (string, bool) {
+	details, err, status := factorio.ModPortalModDetails(name)
+	if err != nil || status != http.StatusOK {
+		message := fmt.Sprintf("Error in getting mod details from mod portal: %s", err)
+		log.Println(message)
+		w.WriteHeader(http.StatusInternalServerError)
+		return message, false
+	}
+	found, err := downloadModPortalVersion(details, version, mods.DownloadMod)
+	if err != nil {
+		message := fmt.Sprintf("Error downloading mod {%s}, error: %s", details.Name, err)
+		log.Println(message)
+		w.WriteHeader(http.StatusInternalServerError)
+		return message, false
+	}
+	if !found {
+		// Preserve the legacy batch behavior: signal failure but continue with
+		// later items and return the installed-mod list after processing them.
+		log.Printf("Error downloading mod {%s}, error: %s", details.Name, "version not found")
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+	return "", true
+}
+
+func downloadModPortalVersion(details factorio.ModPortalStruct, version factorio.Version, download func(string, string, string) error) (bool, error) {
+	for _, release := range details.Releases {
+		if release.Version.Equals(version) {
+			return true, download(release.DownloadURL, release.FileName, details.Name)
+		}
+	}
+	return false, nil
 }
 
 func PublicModPackShareHandler(w http.ResponseWriter, r *http.Request) {
@@ -534,7 +551,7 @@ func PublicModPackShareHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, modPackName))
-	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set(headerContentType, "application/zip")
 	w.WriteHeader(http.StatusOK)
 
 	zipWriter := zip.NewWriter(w)

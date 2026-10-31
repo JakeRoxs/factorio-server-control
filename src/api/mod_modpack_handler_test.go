@@ -1,14 +1,10 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,7 +61,7 @@ func UnknownModpackTest(t *testing.T, method string, baseRoute string, route str
 
 		requestBody := strings.NewReader(`{"name": "belt-balancer"}`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusNotFound, "")
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusNotFound, ""})
 	})
 }
 
@@ -76,7 +72,7 @@ func ModPackUnknownModTest(t *testing.T, method string, baseRoute string, route 
 
 		requestBody := strings.NewReader(`{"name": "askhdbali"}`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 }
 
@@ -87,7 +83,7 @@ func ModPackEmptyBodyTest(t *testing.T, method string, baseRoute string, route s
 		SetupMods(t, false)
 		defer CleanupMods(t)
 
-		CallRoute(t, method, baseRoute, route, nil, handlerFunc, http.StatusBadRequest, "")
+		CallRoute(t, method, baseRoute, route, nil, handlerFunc, routeExpectation{http.StatusBadRequest, ""})
 	})
 }
 
@@ -100,7 +96,7 @@ func ModPackInvalidJsonBodyTest(t *testing.T, method string, baseRoute string, r
 
 		requestBody := strings.NewReader(`{`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusBadRequest, "")
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusBadRequest, ""})
 	})
 }
 
@@ -158,7 +154,7 @@ func TestModPackListHandler(t *testing.T) {
   }
 ]`
 
-		CallRoute(t, method, route, route, nil, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, nil, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	t.Run("empty modpack", func(t *testing.T) {
@@ -167,7 +163,7 @@ func TestModPackListHandler(t *testing.T) {
 
 		expected := `[]`
 
-		CallRoute(t, method, route, route, nil, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, nil, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 }
 
@@ -228,7 +224,7 @@ func TestModPackCreateHandler(t *testing.T) {
   }
 ]`
 
-		CallRoute(t, method, route, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, route, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	ModPackEmptyBodyTest(t, method, route, route, handlerFunc)
@@ -248,7 +244,7 @@ func TestModPackDeleteHandler(t *testing.T) {
 		SetupModPacks(t, false, false)
 		defer CleanupModPacks(t)
 
-		CallRoute(t, method, baseRoute, route, nil, handlerFunc, http.StatusOK, `"test"`)
+		CallRoute(t, method, baseRoute, route, nil, handlerFunc, routeExpectation{http.StatusOK, `"test"`})
 	})
 
 	UnknownModpackTest(t, method, baseRoute, route, handlerFunc)
@@ -307,7 +303,7 @@ func TestModPackLoadHandler(t *testing.T) {
   ]
 }`
 
-		CallRoute(t, method, baseRoute, route, nil, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, nil, handlerFunc, routeExpectation{http.StatusOK, expected})
 
 		// check if mods are really loaded
 		packMap, err := factorio.NewModPackMap()
@@ -333,7 +329,7 @@ func TestModPackLoadHandler(t *testing.T) {
 
 		expected := `{"mods":[]}`
 
-		CallRoute(t, method, baseRoute, route, nil, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, nil, handlerFunc, routeExpectation{http.StatusOK, expected})
 
 		// check if mods are really loaded
 		packMap, err := factorio.NewModPackMap()
@@ -406,7 +402,7 @@ func TestModPackModListHandler(t *testing.T) {
   ]
 }`
 
-		CallRoute(t, method, baseRoute, route, nil, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, nil, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	UnknownModpackTest(t, method, baseRoute, route, handlerFunc)
@@ -429,26 +425,13 @@ func TestModPackModToggleHandler(t *testing.T) {
 		// mod is now deactivated
 		expected := "false"
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 
 		// check if changes happened
 		packMap, err := factorio.NewModPackMap()
 		assert.NoError(t, err, "Error creating modPackMap")
 
-		found := false
-		for _, mod := range packMap["test"].Mods.ModSimpleList.Mods {
-			if mod.Name == "belt-balancer" {
-				// this mod has to be deactivated now
-				if mod.Enabled {
-					t.Fatalf("Mod is wrongly enabled, it should be disabled by now")
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("Mod not found")
-		}
+		assertModPackModState(t, packMap, "test", "belt-balancer", false)
 
 		// toggle again, to check if the other direction also works
 		// mod is now activated again
@@ -457,25 +440,12 @@ func TestModPackModToggleHandler(t *testing.T) {
 		// reset request body, it has to be red again
 		requestBody.Seek(0, 0)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 
 		packMap, err = factorio.NewModPackMap()
 		assert.NoError(t, err, "Error creating modPackMap")
 
-		found = false
-		for _, mod := range packMap["test"].Mods.ModSimpleList.Mods {
-			if mod.Name == "belt-balancer" {
-				// this mod has to be deactivated now
-				if !mod.Enabled {
-					t.Fatalf("Mod is wrongly disabled, it should be enabled again")
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("Mod not found")
-		}
+		assertModPackModState(t, packMap, "test", "belt-balancer", true)
 	})
 
 	UnknownModpackTest(t, method, baseRoute, route, handlerFunc)
@@ -501,7 +471,7 @@ func TestModPackModDeleteHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`{"name": "belt-balancer"}`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusOK, `true`)
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, `true`})
 
 		// check if mod is really not installed anymore
 		packMap, err := factorio.NewModPackMap()
@@ -533,7 +503,7 @@ func TestModPackModDeleteAllHandler(t *testing.T) {
 		SetupModPacks(t, false, false)
 		defer CleanupModPacks(t)
 
-		CallRoute(t, method, baseRoute, route, nil, handlerFunc, http.StatusOK, "true")
+		CallRoute(t, method, baseRoute, route, nil, handlerFunc, routeExpectation{http.StatusOK, "true"})
 
 		// check if really empty
 		packMap, err := factorio.NewModPackMap()
@@ -563,7 +533,7 @@ func TestModPackModUpdateHandler(t *testing.T) {
 
 		expected := `{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true}`
 
-		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBodySuccess), handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBodySuccess), handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	t.Run("success with disabled mod", func(t *testing.T) {
@@ -579,7 +549,7 @@ func TestModPackModUpdateHandler(t *testing.T) {
 
 		expected := `{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":false}`
 
-		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBodySuccess), handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBodySuccess), handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	UnknownModpackTest(t, method, baseRoute, route, handlerFunc)
@@ -594,7 +564,7 @@ func TestModPackModUpdateHandler(t *testing.T) {
 
 		requestBody := `{"modName": "asldbsac", "downloadUrl": "/download/belt-balancer/5e711cd95bcf4f000b96b22c", "fileName": "belt-balancer_2.1.2.zip"}`
 
-		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBody), handlerFunc, http.StatusNotFound, "")
+		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBody), handlerFunc, routeExpectation{http.StatusNotFound, ""})
 	})
 
 	t.Run("wrong download link", func(t *testing.T) {
@@ -603,7 +573,7 @@ func TestModPackModUpdateHandler(t *testing.T) {
 
 		requestBody := `{"modName": "asldbsac", "downloadUrl": "/download/belt-balancer/95bcf4f000b96b22c", "fileName": "belt-balancer_2.1.2.zip"}`
 
-		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBody), handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, baseRoute, route, strings.NewReader(requestBody), handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 
 		// check if old mod is still there
 		packMap, err := factorio.NewModPackMap()
@@ -628,46 +598,38 @@ func ModPackModUploadRequest(t *testing.T, body bool, filePath string) *httptest
 	route := "/mods/packs/test/mod/upload"
 	handlerFunc := ModPackModUploadHandler
 
-	var err error
+	requestBody, contentType := buildMultipartUploadRequest(t, body, filePath)
 
-	requestBody := &bytes.Buffer{}
-
-	writer := multipart.NewWriter(requestBody)
-
-	if body {
-		file, err := os.Open(filePath)
-		if err == nil {
-			assert.NoError(t, err, "error opening mod file")
-
-			formFile, err := writer.CreateFormFile("mod_file", filepath.Base(filePath))
-			assert.NoError(t, err, "error creating formFileWriter")
-
-			_, err = io.Copy(formFile, file)
-			assert.NoError(t, err, "error copying file to form")
-		}
-	}
-
-	err = writer.Close()
-	if err != nil {
-		t.Fatalf("error closing the multipart writer: %s", err)
-	}
-
-	// create request to send
 	request, err := http.NewRequest(method, route, requestBody)
 	assert.NoError(t, err, "Error creating request")
-	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Content-Type", contentType)
 
-	// create response recorder
 	recorder := httptest.NewRecorder()
 
-	// get the handler, where the request is handled
 	router := mux.NewRouter()
 	router.HandleFunc(baseRoute, handlerFunc)
 
-	// call the handler directly
 	router.ServeHTTP(recorder, request)
 
 	return recorder
+}
+
+// assertModPackModState verifies that the named mod inside the modpack has the
+// expected enabled state. It fails the test if the mod is missing or its state
+// does not match.
+func assertModPackModState(t *testing.T, packMap factorio.ModPackMap, packName, modName string, enabled bool) {
+	t.Helper()
+
+	for _, mod := range packMap[packName].Mods.ModSimpleList.Mods {
+		if mod.Name != modName {
+			continue
+		}
+		if mod.Enabled != enabled {
+			t.Fatalf("Mod %q enabled = %t; want %t", modName, mod.Enabled, enabled)
+		}
+		return
+	}
+	t.Fatalf("Mod %q not found", modName)
 }
 
 func TestModPackModUploadHandler(t *testing.T) {
@@ -758,7 +720,7 @@ func TestModPackModPortalInstallHandler(t *testing.T) {
 
 		expected := `{"mods":[{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true}]}`
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	ModPackEmptyBodyTest(t, method, baseRoute, route, handlerFunc)
@@ -771,7 +733,7 @@ func TestModPackModPortalInstallHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`{"modName": "belt-balancer", "downloadUrl": "/download/belt-balancer/95bcf4f000b96b22c", "fileName": "belt-balancer_2.1.2.zip"}`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 }
 
@@ -791,7 +753,7 @@ func TestModPackModPortalInstallMultipleHandler(t *testing.T) {
 
 		expected := `{"mods":[{"name":"belt-balancer","version":"3.0.0","title":"Belt Balancer","author":"knoxfighter","file_name":"belt-balancer_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true},{"name":"train-station-overview","version":"3.0.0","title":"Train Station Overview","author":"knoxfighter","file_name":"train-station-overview_3.0.0.zip","factorio_version":"1.1.0.0","dependencies":null,"compatibility":true,"enabled":true}]}`
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusOK, expected)
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusOK, expected})
 	})
 
 	t.Run("unknown mod", func(t *testing.T) {
@@ -800,7 +762,7 @@ func TestModPackModPortalInstallMultipleHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`[{"name": "askdhcb", "version": "2.1.2"}]`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 
 	t.Run("unknown version", func(t *testing.T) {
@@ -809,7 +771,7 @@ func TestModPackModPortalInstallMultipleHandler(t *testing.T) {
 
 		requestBody := strings.NewReader(`[{"name": "belt-balancer", "version": "0.1.12"}]`)
 
-		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, http.StatusInternalServerError, "")
+		CallRoute(t, method, baseRoute, route, requestBody, handlerFunc, routeExpectation{http.StatusInternalServerError, ""})
 	})
 
 	ModPackEmptyBodyTest(t, method, baseRoute, route, handlerFunc)

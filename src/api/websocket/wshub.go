@@ -37,6 +37,25 @@ type wsMessage struct {
 	Controls WsControls  `json:"controls,omitempty"`
 }
 
+// wsRoom is a single room owned by the wsHub for the lifetime of the hub.
+//
+// Lifetime policy (intentional retention):
+//   - Rooms are created on demand by wsHub.GetRoom and are never removed from
+//     the hub's rooms map, even when the last client unregisters. A wsRoom
+//     pointer is therefore a stable handle: GetRoom returns the same pointer for
+//     a given name, and that pointer remains valid after empty unregister and
+//     rejoin.
+//   - Unregister only removes the client from the room's client map; it does not
+//     delete the room.
+//   - The hub owns the rooms map (serialized by roomsMu). Room state (the client
+//     map) is owned by the room's own run() goroutine, so it is never accessed
+//     concurrently.
+//   - Deleting empty rooms was rejected: callers in factorio/server.go retain
+//     room pointers and call Send on them (broadcastStatus, game log output,
+//     RCON responses), and dynamic per-server rooms are created on demand.
+//     Deleting a room would require coordinated hub ownership to avoid
+//     split-room/race hazards (a client subscribing to a room being deleted, or
+//     a caller holding a stale pointer).
 type wsRoom struct {
 	// same as the key of the map in the wsHub
 	name string
@@ -47,7 +66,9 @@ type wsRoom struct {
 	// register a client to this room
 	register chan *wsClient
 
-	// unregister a client from this room, if no clients remain, this room will be deleted
+	// unregister a client from this room. The room itself is never deleted: it
+	// remains a stable handle owned by the hub for its lifetime. Unregister only
+	// removes the client from the room's client map.
 	unregister chan *wsClient
 
 	// send a message to all clients in this room
@@ -209,68 +230,81 @@ func (room *wsRoom) run() {
 	for {
 		select {
 		case client := <-room.register:
-			if !client.maySubscribeRoom(room.name) {
-				continue
-			}
-			room.clients[client] = true
-
-			// some hardcoded stuff for gamelog room
-			if room.name == "gamelog" {
-				// send cached log to registered client
-			cacheReplay:
-				for _, logLine := range LogCache {
-					select {
-					case client.send <- wsMessage{
-						RoomName: room.name,
-						Message:  logLine,
-					}:
-					default:
-						delete(room.clients, client)
-						break cacheReplay
-					}
-				}
-			}
+			room.handleRegister(client)
 		case client := <-room.unregister:
-			if _, ok := room.clients[client]; ok {
-				delete(room.clients, client)
-				// FIXME when more rooms are used, remove empty rooms.
-				// Since we only have a few rooms at the same time, just keep them.
-				// This is code, that will cause a concurrent call on `wsHub.rooms`.
-				// To fix this, move the deletion into the hub.
-				// Be careful to think about race conditions, if a user registered to the room, before room was really deleted.
-				//if len(room.clients) == 0 {
-				//	//remove this room
-				//	delete(room.hub.rooms, room.name)
-				//	return
-				//}
-			}
+			room.handleUnregister(client)
 		case message := <-room.send:
-			for client := range room.clients {
-				if !client.maySubscribeRoom(room.name) {
-					delete(room.clients, client)
-					continue
-				}
-				select {
-				case client.send <- message:
-				default:
-					// This code already runs inside room.run. Sending to the
-					// room's own unbuffered unregister channel would deadlock.
-					delete(room.clients, client)
-				}
-			}
-
-			// some hardcoded stuff for gamelog room
-			if room.name == "gamelog" {
-				// add the line to the cache
-				LogCache = append(LogCache, message.Message.(string))
-				config := bootstrap.GetConfig()
-
-				// When cache is bigger than max size, delete one line
-				if len(LogCache) > config.ConsoleCacheSize {
-					LogCache = LogCache[1:]
-				}
-			}
+			room.handleSend(message)
 		}
+	}
+}
+
+// handleRegister subscribes a client to the room when the client is allowed,
+// then replays the cached game log for the gamelog room. A client whose send
+// channel cannot keep up is dropped during replay. The room itself is never
+// deleted; see the room lifetime policy above.
+func (room *wsRoom) handleRegister(client *wsClient) {
+	if !client.maySubscribeRoom(room.name) {
+		return
+	}
+	room.clients[client] = true
+	if room.name == "gamelog" {
+		room.replayLogCache(client)
+	}
+}
+
+// replayLogCache sends every cached log line to the client in order. If the
+// client's send channel is full, the client is dropped from the room and replay
+// stops. This preserves the existing bounded, non-blocking replay.
+func (room *wsRoom) replayLogCache(client *wsClient) {
+	for _, logLine := range LogCache {
+		select {
+		case client.send <- wsMessage{
+			RoomName: room.name,
+			Message:  logLine,
+		}:
+		default:
+			delete(room.clients, client)
+			return
+		}
+	}
+}
+
+// handleUnregister removes a client from the room. Rooms are intentionally
+// never deleted from the hub, even when empty; see the room lifetime policy.
+func (room *wsRoom) handleUnregister(client *wsClient) {
+	if _, ok := room.clients[client]; ok {
+		delete(room.clients, client)
+	}
+}
+
+// handleSend broadcasts a message to every client in the room. Clients that are
+// no longer authorized or whose send channel is full are dropped. For the
+// gamelog room, the message is also appended to the shared log cache.
+func (room *wsRoom) handleSend(message wsMessage) {
+	for client := range room.clients {
+		if !client.maySubscribeRoom(room.name) {
+			delete(room.clients, client)
+			continue
+		}
+		select {
+		case client.send <- message:
+		default:
+			delete(room.clients, client)
+		}
+	}
+	if room.name == "gamelog" {
+		room.appendLogCache(message)
+	}
+}
+
+// appendLogCache appends a gamelog line to the shared cache and trims it to
+// the configured maximum size, preserving insertion order.
+func (room *wsRoom) appendLogCache(message wsMessage) {
+	LogCache = append(LogCache, message.Message.(string))
+	config := bootstrap.GetConfig()
+	if len(LogCache) > config.ConsoleCacheSize {
+		LogCache = LogCache[1:]
 	}
 }
 
