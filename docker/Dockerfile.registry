@@ -3,7 +3,7 @@
 ARG VERSION="dev"
 ARG VCS_REF="unknown"
 
-FROM --platform=$BUILDPLATFORM node@sha256:ec857ea6bb60cb3d0fa4d97495590c5fe7d51be8572c307b55957eeb06569cf7 AS frontend-build
+FROM --platform=$BUILDPLATFORM node@sha256:438603bbb5cda404b9416f0b5c8026f61501ab911760d861ec28c36b5d675725 AS frontend-build
 
 ARG VERSION
 ARG VCS_REF
